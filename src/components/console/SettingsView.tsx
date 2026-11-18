@@ -146,7 +146,7 @@ export function SettingsView({
                 <div className="mt-0.5 text-[13px] text-muted">
                   {connected
                     ? `${contabo?.api_user ?? ''} · ${contabo?.instance_count ?? 0} servers · last sync ${when(contabo?.last_sync_at)}`
-                    : 'Connect to import your Contabo servers, see their status, and start, restart, or shut them down from the VPS page.'}
+                    : ''}
                 </div>
                 {connected && contabo?.last_sync_error ? <div className="mt-1 text-[13px] text-bad">{contabo.last_sync_error}</div> : null}
                 {notice ? <div className="mt-1 text-[13px] text-good">{notice}</div> : null}
@@ -224,9 +224,6 @@ export function SettingsView({
                       Cancel
                     </button>
                   ) : null}
-                  <span className="text-xs text-muted">
-                    Find these in the Contabo Customer Control Panel under API. They are stored encrypted and never shown again.
-                  </span>
                 </div>
               </form>
             )}
@@ -235,13 +232,6 @@ export function SettingsView({
 
         <Section title="proxies" summary={summary['proxies']} open={openSet.has('proxies')} onToggle={toggle}>
           <div className="px-5 pt-4">
-            <p className="text-[13px] text-muted">
-              The proxy library. Each Amazon account gets one dedicated proxy and keeps it. Upload the file from your provider, one proxy per line as{' '}
-              <span className="font-mono">host:port:username:password</span>. Passwords are stored encrypted and never shown again.
-            </p>
-            <div className="mt-2 font-mono text-xs text-muted">
-              {proxies.length} proxies · {proxies.length - proxiesFree} assigned · {proxiesFree} free
-            </div>
             {proxyNotice ? <div className="mt-2 text-[13px] text-good">{proxyNotice}</div> : null}
           </div>
           <form
@@ -334,12 +324,6 @@ export function SettingsView({
         </Section>
 
         <Section title="cards" summary={summary['cards']} open={openSet.has('cards')} onToggle={toggle}>
-          <div className="px-5 pt-4">
-            <p className="text-[13px] text-muted">
-              The card library. Add each card once as bank and last 4, then pick it on any account. The card itself lives in the Amazon account, so no card
-              number is ever kept here.
-            </p>
-          </div>
           <div className="px-5 py-3">
             {cards.length === 0 ? <div className="py-2 font-mono text-[13px] text-muted">no cards yet.</div> : null}
             {cards.map((c) => (
@@ -398,16 +382,6 @@ export function SettingsView({
         </Section>
 
         <Section title="two-step codes" summary={summary['two-step codes']} open={openSet.has('two-step codes')} onToggle={toggle}>
-          <div className="px-5 pt-4">
-            <p className="text-[13px] text-muted">
-              DiceDrop acts as the authenticator app for your Amazon accounts. In Amazon&apos;s two-step setup choose &quot;authenticator app&quot;, click
-              &quot;Can&apos;t scan the barcode?&quot;, and paste the text key here. The live 6-digit code then shows next to the account on the Accounts page,
-              and the account&apos;s box can pull it on its own when Amazon asks.
-            </p>
-            <div className="mt-2 font-mono text-xs text-muted">
-              {generating} of {twoStep.length} accounts generating
-            </div>
-          </div>
           <div className="px-5 py-3">
             {twoStep.length === 0 ? (
               <div className="py-4 font-mono text-[13px] text-muted">no accounts yet. add one on the accounts page.</div>
@@ -506,9 +480,6 @@ export function SettingsView({
         </Section>
 
         <Section title="selectors" summary={summary['selectors']} open={openSet.has('selectors')} onToggle={toggle}>
-          <p className="px-5 pt-4 text-[13px] text-muted">
-            Where Amazon&apos;s buttons and fields live. Every box picks up a change on its next check-in, so a page change on Amazon is a one-row edit here.
-          </p>
           <div className="px-5 py-4">
             {selectors.map((s) => {
               const draft = drafts[s.key] ?? s.value;
@@ -549,8 +520,7 @@ export function SettingsView({
 
         <Section title="operators" summary={summary['operators']} open={openSet.has('operators')} onToggle={toggle}>
           <div className="px-5 py-4">
-            <p className="text-[13px] text-muted">The people who can sign in to this console. Nobody else has access.</p>
-            <ul className="mt-3 space-y-1 font-mono text-[13px]">
+            <ul className="space-y-1 font-mono text-[13px]">
               {operators.map((email) => (
                 <li key={email}>{email}</li>
               ))}
