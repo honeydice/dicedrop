@@ -32,6 +32,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const now = useNow();
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState('');
+  // Accounts are grouped into one folder per supplier. One folder is open at a time.
+  const [folder, setFolder] = useState('amazon');
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState('');
@@ -103,7 +105,9 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     [data.accounts],
   );
 
+  const suppliers = Array.from(new Set(['amazon', ...data.accounts.map((a) => a.supplier || 'amazon')])).sort();
   const rows = data.accounts.filter((a) => {
+    if ((a.supplier || 'amazon') !== folder) return false;
     if (filter === 'ready') return isReady(a);
     if (filter === 'attention') return needsAttention(a);
     if (filter === 'paused') return a.status === 'paused';
@@ -111,7 +115,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     return true;
   });
 
-  const { shown, pager } = usePaged(rows, filter);
+  const { shown, pager } = usePaged(rows, `${folder}:${filter}`);
   const ordersToday = data.accounts.reduce((sum, a) => sum + Number(a.orders_today), 0);
   const capacity = data.accounts.filter((a) => a.status === 'active' || a.status === 'warming').reduce((sum, a) => sum + Number(a.daily_order_cap), 0);
 
@@ -164,7 +168,29 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
         ))}
       </div>
 
-      <Card title={`GET /accounts${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{rows.length}</Badge>}>
+      <Card title={`GET /accounts${folder ? `/${folder}` : ''}${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{folder ? rows.length : data.accounts.length}</Badge>}>
+        {suppliers.map((s) => {
+          const inFolder = data.accounts.filter((a) => (a.supplier || 'amazon') === s);
+          const online = inFolder.filter((a) => a.box_online === true && a.status !== 'paused').length;
+          const isFolderOpen = folder === s;
+          return (
+            <div key={s} className="border-b border-divider last:border-b-0">
+              <button
+                type="button"
+                aria-expanded={isFolderOpen}
+                onClick={() => setFolder(isFolderOpen ? '' : s)}
+                className="flex min-h-[52px] w-full items-center gap-3.5 bg-transparent px-5 text-left hover:bg-raised/60"
+              >
+                <span aria-hidden="true" className="w-3 font-mono text-[13px] text-muted">
+                  {isFolderOpen ? '▾' : '▸'}
+                </span>
+                <span className="font-mono text-[15px] text-fg">{s}/</span>
+                <span className="font-mono text-[13px] text-muted">
+                  {inFolder.length} account{inFolder.length === 1 ? '' : 's'} · {online} connected
+                </span>
+              </button>
+              {isFolderOpen ? (
+                <div className="border-t border-divider">
         {shown.map((a) => {
           const isOpen = open === a.id;
           const full = Number(a.orders_today) >= Number(a.daily_order_cap);
@@ -308,6 +334,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           </div>
         ) : null}
         {pager}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </Card>
     </>
   );
