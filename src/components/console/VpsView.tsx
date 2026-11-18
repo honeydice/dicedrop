@@ -96,27 +96,6 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
         <Tile label="Placed today" value={String(placedToday)} />
       </section>
 
-      <div className="mb-5">
-        <Card title="next in line" right={<Badge>{data.pending_total}</Badge>}>
-          {data.queue.length === 0 ? (
-            <div className="px-5 py-6 text-center font-mono text-[13px] text-muted">the queue is empty.</div>
-          ) : (
-            data.queue.map((q, i) => (
-              <div key={q.id} className="flex items-start gap-3.5 border-b border-divider px-5 py-3 last:border-b-0">
-                <span className="w-5 shrink-0 font-mono text-[13px] text-muted">{i + 1}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[14px]">{q.order_number}</div>
-                  <div className="mt-0.5 truncate text-[13px] text-muted">
-                    {q.title ?? 'Untitled item'} · {q.client_name}
-                  </div>
-                </div>
-                <div className="shrink-0 font-mono text-[13px] text-muted">{now ? `waiting ${timeAgo(q.created_at, now).replace(' ago', '')}` : ''}</div>
-              </div>
-            ))
-          )}
-        </Card>
-      </div>
-
       {token ? (
         <div role="status" className="mb-5 rounded-2xl border border-accent/50 bg-raised p-5">
           <div className="font-medium">Token for {token.box}. Copy it now; it is shown only once.</div>
