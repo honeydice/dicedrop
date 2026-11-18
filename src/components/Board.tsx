@@ -28,9 +28,6 @@ const TABS: { id: TabId; label: string; dot: string }[] = [
   { id: 'issue', label: 'Issues', dot: LOOK.issue.fg },
 ];
 
-const GRID =
-  'grid grid-cols-[132px_minmax(240px,2.2fr)_196px_140px_170px_92px_92px_92px_60px] items-center gap-x-4';
-
 type Action = 'retry' | 'hold' | 'cancel';
 
 function allowed(status: OrderStatus, action: Action): boolean {
@@ -242,137 +239,118 @@ export function Board({
         })}
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-line bg-panel">
-        <div className="min-w-[1180px]">
-          <div className={`${GRID} border-b border-line px-5 py-3 text-xs font-medium uppercase tracking-wider text-muted`}>
-            <div>Status</div>
-            <div>Title</div>
-            <div>Order #</div>
-            <div>Account</div>
-            <div>Buyer</div>
-            <div className="text-right">Price</div>
-            <div className="text-right">Fees</div>
-            <div className="text-right">Profit</div>
-            <div />
-          </div>
-
-          {rows.map((o) => {
-            const look = LOOK[o.status] ?? LOOK.pending;
-            const placed = o.buy_cost !== null && o.buy_cost !== undefined;
-            const profit = o.profit === null || o.profit === undefined ? null : Number(o.profit);
-            const menuOpen = openMenu === o.id;
-            return (
-              <div key={o.id} className="border-b border-divider last:border-b-0">
-                <div className={`${GRID} min-h-[64px] px-5 py-2.5`}>
-                  <div>
-                    <span
-                      className="inline-flex items-center gap-[7px] rounded-full px-2.5 py-1 text-xs font-semibold"
-                      style={{ color: look.fg, background: look.bg }}
-                    >
-                      <span aria-hidden="true" className="inline-block h-[7px] w-[7px] rounded-full" style={{ background: look.fg }} />
-                      {look.label}
-                    </span>
-                    <div className="mt-1 text-xs text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">
-                      {o.title ?? o.asin ?? 'Untitled item'}
-                      {o.quantity > 1 ? <span className="text-muted"> ×{o.quantity}</span> : null}
-                    </div>
-                    {o.issue_reason ? (
-                      <div className="mt-1 flex items-center gap-1.5 text-xs text-bad">
-                        <svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M12 3l10 18H2z" />
-                          <path d="M12 10v5" />
-                          <path d="M12 18v.5" />
-                        </svg>
-                        {o.issue_reason}
-                      </div>
-                    ) : null}
-                    {o.cancel_requested ? <div className="mt-1 text-xs text-warn">Cancel requested</div> : null}
-                  </div>
-                  <div className="font-mono text-xs">
-                    <div>{o.order_number}</div>
-                    <div className="mt-[3px] text-muted">{o.amazon_order_id ?? 'Amazon # pending'}</div>
-                  </div>
-                  <div>
-                    <div className="font-medium">{o.store_code ?? '—'}</div>
-                    <div className="mt-[3px] text-xs text-muted">{o.account_label ? `via ${o.account_label}` : 'Unassigned'}</div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate">{o.buyer_name ?? '—'}</div>
-                    <div className="mt-[3px] truncate text-xs text-muted">{o.buyer_username ?? ''}</div>
-                  </div>
-                  <div className="text-right font-mono text-[13px]">{money(o.sale_price)}</div>
-                  <div className="text-right font-mono text-[13px] text-soft">{placed ? money(o.sale_fees) : '—'}</div>
-                  <div
-                    className="text-right font-mono text-[13px] font-medium"
-                    style={{ color: profit === null ? 'rgb(var(--muted))' : profit >= 0 ? 'rgb(var(--good))' : 'rgb(var(--bad))' }}
-                  >
-                    {money(profit)}
-                  </div>
-                  <div className="flex justify-end">
-                    {canWrite ? (
-                      <button
-                        type="button"
-                        aria-label={`Backup controls for order ${o.order_number}`}
-                        aria-expanded={menuOpen}
-                        onClick={() => setOpenMenu(menuOpen ? '' : o.id)}
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-transparent text-muted hover:bg-raised hover:text-strong"
-                      >
-                        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                          <circle cx="5" cy="12" r="1.8" />
-                          <circle cx="12" cy="12" r="1.8" />
-                          <circle cx="19" cy="12" r="1.8" />
-                        </svg>
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                {menuOpen ? (
-                  <div className="flex flex-wrap items-center justify-end gap-2 px-5 pb-3">
-                    <div className="mr-2 text-xs text-muted">Backup controls. Your connected app stays the main switch.</div>
-                    {(['retry', 'hold', 'cancel'] as Action[]).map((a) => {
-                      const ok = allowed(o.status, a) && busy !== o.id;
-                      const label = a === 'retry' ? 'Retry' : a === 'hold' ? 'Hold' : 'Cancel order';
-                      return (
-                        <button
-                          key={a}
-                          type="button"
-                          disabled={!ok}
-                          onClick={() => void act(o, a)}
-                          className={`min-h-[44px] rounded-lg border bg-raised px-4 text-[13px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
-                            a === 'cancel' ? 'border-dangerline text-bad' : 'border-edge text-fg'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-
-          {rows.length === 0 ? (
-            <div className="px-5 py-12 text-center text-muted">
-              {data.orders.length === 0
-                ? 'No orders yet. They will appear here the moment your connected app sends one.'
-                : 'No orders match that search in this tab.'}
-            </div>
-          ) : null}
+      <div className="overflow-hidden rounded-2xl border border-line bg-panel">
+        <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+          <div className="font-mono text-[13px] text-muted">GET /orders{tab === 'all' ? '' : `?status=${tab}`}</div>
+          <span className="rounded-full bg-good/20 px-2.5 py-0.5 font-mono text-xs font-medium text-good">{rows.length}</span>
         </div>
+
+        {rows.map((o) => {
+          const look = LOOK[o.status] ?? LOOK.pending;
+          const placed = o.buy_cost !== null && o.buy_cost !== undefined;
+          const profit = o.profit === null || o.profit === undefined ? null : Number(o.profit);
+          const open = openMenu === o.id;
+          const fresh = now !== null && now - new Date(o.updated_at).getTime() < 60000;
+          const who = [o.buyer_name, o.buyer_username, o.store_code ? `${o.store_code}${o.account_label ? ` via ${o.account_label}` : ''}` : null]
+            .filter(Boolean)
+            .join(' · ');
+          return (
+            <div
+              key={o.id}
+              className="border-b border-divider last:border-b-0"
+              style={fresh ? { background: look.bg } : undefined}
+            >
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setOpenMenu(open ? '' : o.id)}
+                className="flex w-full items-start gap-3.5 bg-transparent px-5 py-3.5 text-left hover:bg-raised/60"
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-[7px] inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ background: look.fg }}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-3 font-mono text-[15px]">
+                    <span className="text-fg">order.{o.status}</span>
+                    <span className="text-[13px] text-muted">{o.order_number}</span>
+                  </span>
+                  <span className="mt-1 block text-[13px] text-muted">
+                    {o.title ?? o.asin ?? 'Untitled item'}
+                    {o.quantity > 1 ? ` ×${o.quantity}` : ''}
+                    {who ? ` · ${who}` : ''}
+                  </span>
+                  {o.issue_reason ? <span className="mt-1 block text-[13px] text-bad">{o.issue_reason}</span> : null}
+                  {o.cancel_requested ? <span className="mt-1 block text-[13px] text-warn">cancel requested</span> : null}
+                </span>
+                <span className="shrink-0 text-right font-mono">
+                  <span className="block text-[13px] text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</span>
+                  <span className="mt-1 block text-[13px] text-fg">{money(o.sale_price)}</span>
+                  {placed ? (
+                    <span
+                      className="block text-xs"
+                      style={{ color: profit === null ? 'rgb(var(--muted))' : profit >= 0 ? 'rgb(var(--good))' : 'rgb(var(--bad))' }}
+                    >
+                      profit {money(profit)}
+                    </span>
+                  ) : null}
+                </span>
+              </button>
+
+              {open ? (
+                <div className="border-t border-divider px-5 pb-4 pt-3 pl-[46px]">
+                  <dl className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-2 font-mono text-xs">
+                    {[
+                      ['amazon_order', o.amazon_order_id ?? 'pending'],
+                      ['account', o.account_label ?? 'unassigned'],
+                      ['store', o.store_code ?? '—'],
+                      ['asin', o.asin ?? '—'],
+                      ['price', money(o.sale_price)],
+                      ['fees', money(o.sale_fees)],
+                      ['cost', placed ? money(o.buy_cost) : o.est_cost !== null ? `est. ${money(o.est_cost)}` : '—'],
+                      ['profit', money(profit)],
+                      ['tracking', o.tracking_number ?? '—'],
+                    ].map(([k, v]) => (
+                      <div key={k}>
+                        <dt className="text-muted">{k}</dt>
+                        <dd className="mt-0.5 break-all text-fg">{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {canWrite ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {(['retry', 'hold', 'cancel'] as Action[]).map((a) => {
+                        const ok = allowed(o.status, a) && busy !== o.id;
+                        const label = a === 'retry' ? 'retry' : a === 'hold' ? 'hold' : 'cancel';
+                        return (
+                          <button
+                            key={a}
+                            type="button"
+                            disabled={!ok}
+                            onClick={() => void act(o, a)}
+                            className={`min-h-[44px] rounded-lg border bg-raised px-4 font-mono text-[13px] disabled:cursor-not-allowed disabled:opacity-40 ${
+                              a === 'cancel' ? 'border-dangerline text-bad' : 'border-edge text-fg'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                      <span className="ml-1 text-xs text-muted">Backup controls. Your connected app stays the main switch.</span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+
+        {rows.length === 0 ? (
+          <div className="px-5 py-12 text-center font-mono text-[13px] text-muted">
+            {data.orders.length === 0 ? 'no orders yet. they appear here the moment your connected app sends one.' : 'no orders match.'}
+          </div>
+        ) : null}
       </div>
     </main>
   );
