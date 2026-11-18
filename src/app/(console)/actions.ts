@@ -472,6 +472,19 @@ export async function updateSelector(key: string, value: string): Promise<Result
   }
 }
 
+export async function setAccountsPerBox(count: number): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const n = Math.floor(Number(count));
+    if (!Number.isFinite(n) || n < 1 || n > 50) return { ok: false, error: 'Accounts per VPS should be between 1 and 50.' };
+    const { error } = await ctx.db.from('platform_settings').update({ accounts_per_box: n }).eq('id', 1);
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 export async function setTimezone(timezone: string): Promise<Result> {
   try {
     const ctx = await operatorDb();

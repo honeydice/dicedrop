@@ -265,7 +265,7 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                     VPS this account is signed in on
                   </label>
                   <select id="am-box" value={form.box_id} onChange={(e) => set({ box_id: e.target.value })} className={field}>
-                    <option value="">Unassigned</option>
+                    <option value="">{editing ? 'Unassigned' : 'Auto-assign (box with the most room)'}</option>
                     {data.boxes.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name}

@@ -38,7 +38,7 @@ function specs(b: OpsBox): string {
   return parts.join(' / ');
 }
 
-export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialError: string }) {
+export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBoxes; initialError: string; perBox?: number }) {
   const { data, error, setError, refresh } = useLive<OpsBoxes>('dd_ops_boxes', undefined, initial, initialError, 5000);
   const { shown: shownBoxes, pager } = usePaged(data.boxes);
   const now = useNow();
@@ -143,7 +143,7 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
               <span className="ml-auto font-mono text-xs text-muted">
                 {[
                   b.working.length > 0 ? `placing ${b.working.length}` : 'idle',
-                  `${b.accounts.length} acct${b.accounts.length === 1 ? '' : 's'}`,
+                  `${b.accounts.length} / ${perBox} accts`,
                   `${b.placed_today} today`,
                   b.last_heartbeat && now ? `hb ${timeAgo(b.last_heartbeat, now)}` : null,
                 ]
