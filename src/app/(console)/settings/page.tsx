@@ -1,6 +1,6 @@
 import { SettingsView } from '@/components/console/SettingsView';
 import { createClient } from '@/lib/supabase/server';
-import type { ContaboStatus, OpsAccounts, OpsCard } from '@/lib/types';
+import type { ContaboStatus, OpsAccounts, OpsCard, OpsProxy } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,16 +18,19 @@ export default async function SettingsPage() {
   let contabo: ContaboStatus | null = null;
   let twoStep: { id: string; label: string; totp_enabled: boolean; totp_set_at: string | null }[] = [];
   let cards: OpsCard[] = [];
+  let proxies: OpsProxy[] = [];
   try {
     const supabase = createClient();
-    const [s, o, p, c, a] = await Promise.all([
+    const [s, o, p, c, a, px] = await Promise.all([
       supabase.from('selectors').select('key, value, description').order('key', { ascending: true }),
       supabase.from('platform_admins').select('email').order('created_at', { ascending: true }),
       supabase.from('platform_settings').select('timezone').eq('id', 1).maybeSingle(),
       supabase.rpc('dd_ops_contabo_status'),
       supabase.rpc('dd_ops_accounts'),
+      supabase.rpc('dd_ops_proxies'),
     ]);
     twoStep = ((a.data as OpsAccounts | null)?.accounts ?? []).map((x) => ({ id: x.id, label: x.label, totp_enabled: x.totp_enabled, totp_set_at: x.totp_set_at }));
+    proxies = (px.data as OpsProxy[] | null) ?? [];
     cards = (a.data as OpsAccounts | null)?.cards ?? [];
     contabo = (c.data as ContaboStatus | null) ?? null;
     selectors = (s.data as SelectorRow[] | null) ?? [];
@@ -38,5 +41,5 @@ export default async function SettingsPage() {
     error = 'Could not load settings. Refresh to try again.';
   }
 
-  return <SettingsView selectors={selectors} operators={operators.map((x) => x.email ?? '')} timezone={timezone} initialError={error} contabo={contabo} twoStep={twoStep} cards={cards} />;
+  return <SettingsView selectors={selectors} operators={operators.map((x) => x.email ?? '')} timezone={timezone} initialError={error} contabo={contabo} twoStep={twoStep} cards={cards} proxies={proxies} />;
 }

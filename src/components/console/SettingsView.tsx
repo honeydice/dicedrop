@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { addCard, clearTotp, removeCard, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearTotp, importProxies, removeCard, removeProxies, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
-import type { ContaboStatus, OpsCard } from '@/lib/types';
+import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
+import { usePaged } from './Pager';
 import { btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
 
 const ZONES = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu', 'UTC'];
@@ -18,6 +19,7 @@ export function SettingsView({
   contabo,
   twoStep,
   cards,
+  proxies,
 }: {
   selectors: SelectorRow[];
   operators: string[];
@@ -26,6 +28,7 @@ export function SettingsView({
   contabo: ContaboStatus | null;
   twoStep: { id: string; label: string; totp_enabled: boolean; totp_set_at: string | null }[];
   cards: OpsCard[];
+  proxies: OpsProxy[];
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -57,6 +60,11 @@ export function SettingsView({
   const [keyFor, setKeyFor] = useState('');
   const [keyDraft, setKeyDraft] = useState('');
   const [card, setCard] = useState({ bank: '', last4: '', nickname: '' });
+  const [proxyText, setProxyText] = useState('');
+  const [proxyProvider, setProxyProvider] = useState('');
+  const [proxyNotice, setProxyNotice] = useState('');
+  const { shown: shownProxies, pager: proxyPager } = usePaged(proxies);
+  const proxiesFree = proxies.filter((p) => !p.account_id).length;
   const generating = twoStep.filter((x) => x.totp_enabled).length;
 
   const save = async (work: () => Promise<{ ok: boolean; error: string }>) => {
@@ -183,6 +191,106 @@ export function SettingsView({
               </form>
             )}
           </div>
+        </Card>
+
+        <Card title="proxies">
+          <div className="px-5 pt-4">
+            <p className="text-[13px] text-muted">
+              The proxy library. Each Amazon account gets one dedicated proxy and keeps it. Upload the file from your provider, one proxy per line as{' '}
+              <span className="font-mono">host:port:username:password</span>. Passwords are stored encrypted and never shown again.
+            </p>
+            <div className="mt-2 font-mono text-xs text-muted">
+              {proxies.length} proxies · {proxies.length - proxiesFree} assigned · {proxiesFree} free
+            </div>
+            {proxyNotice ? <div className="mt-2 text-[13px] text-good">{proxyNotice}</div> : null}
+          </div>
+          <form
+            className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto]"
+            autoComplete="off"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setProxyNotice('');
+              setBusy(true);
+              setError('');
+              try {
+                const result = await importProxies(proxyText, proxyProvider);
+                if (!result.ok) setError(result.error);
+                else {
+                  setProxyNotice(`Imported: ${result.secret}.`);
+                  setProxyText('');
+                }
+                router.refresh();
+              } catch {
+                setError('That did not go through. Try again.');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <div>
+              <label htmlFor="px-text" className={label}>
+                Proxy lines
+              </label>
+              <textarea
+                id="px-text"
+                rows={4}
+                spellCheck={false}
+                value={proxyText}
+                onChange={(e) => setProxyText(e.target.value)}
+                placeholder="isp.provider.com:10001:username:password"
+                className="w-full rounded-[10px] border border-edge bg-raised px-3.5 py-2.5 font-mono text-[13px] text-fg"
+                style={{ WebkitTextSecurity: proxyText ? 'disc' : undefined } as React.CSSProperties}
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <label className={`${btn} cursor-pointer`}>
+                  Choose CSV or TXT file
+                  <input
+                    type="file"
+                    accept=".csv,.txt,text/plain,text/csv"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setProxyText(await file.text());
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+                <span className="font-mono text-xs text-muted">{proxyText.trim() ? `${proxyText.trim().split(/\r?\n/).filter(Boolean).length} lines ready` : 'no file chosen'}</span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3 sm:w-52">
+              <div>
+                <label htmlFor="px-provider" className={label}>
+                  Provider
+                </label>
+                <input id="px-provider" maxLength={30} placeholder="Decodo" value={proxyProvider} onChange={(e) => setProxyProvider(e.target.value)} className={field} />
+              </div>
+              <button type="submit" disabled={busy || !proxyText.trim()} className={btnAccent}>
+                Import proxies
+              </button>
+            </div>
+          </form>
+          {shownProxies.map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-t border-divider px-5 py-2">
+              <Dot color={p.account_id ? TONE.good : TONE.muted} />
+              <span className="font-mono text-[13px]">{p.label}</span>
+              <span className="font-mono text-[13px] text-muted">
+                {p.host}:{p.port} · {p.account_label ? `assigned to ${p.account_label}` : 'free'}
+              </span>
+              <button
+                type="button"
+                disabled={busy}
+                className="ml-auto min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-bad disabled:opacity-40"
+                onClick={() => {
+                  if (!window.confirm(`Remove ${p.label}?${p.account_label ? ` ${p.account_label} goes back to no proxy.` : ''}`)) return;
+                  void save(() => removeProxies([p.id]));
+                }}
+              >
+                remove
+              </button>
+            </div>
+          ))}
+          {proxyPager}
         </Card>
 
         <Card title="cards">

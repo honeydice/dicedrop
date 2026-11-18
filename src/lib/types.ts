@@ -176,6 +176,18 @@ export interface OpsAccounts {
   cards: OpsCard[];
 }
 
+export interface OpsProxy {
+  id: string;
+  provider: string | null;
+  label: string;
+  host: string;
+  port: number;
+  username: string | null;
+  password_set: boolean;
+  account_id: string | null;
+  account_label: string | null;
+}
+
 export interface OpsCard {
   id: string;
   bank: string;

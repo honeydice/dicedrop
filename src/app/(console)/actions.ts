@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from 'crypto';
 import { getOperator } from '@/lib/context';
 import { createClient } from '@/lib/supabase/server';
+import type { OpsProxy } from '@/lib/types';
 
 export interface Result {
   ok: boolean;
@@ -182,6 +183,8 @@ export interface AccountForm {
   card_id: string;
   box_id: string;
   proxy_label: string;
+  /** The dedicated proxy from the proxy library. Blank means none. */
+  proxy_id: string;
   visibility: 'public' | 'private';
   allowed_clients: string[];
   max_pending_orders: string;
@@ -205,10 +208,57 @@ export async function saveAccount(id: string | null, input: AccountForm): Promis
     ] as const) {
       if (value.trim() && !(Number(value) > 0)) return { ok: false, error: `${name} must be a number above 0, or left blank.` };
     }
-    const { error } = await ctx.db.rpc('dd_ops_save_account', { p_id: id, p: { ...input, supplier: 'amazon', region: 'US' } });
-    return done(error, 'That label is already in use.');
+    const { data, error } = await ctx.db.rpc('dd_ops_save_account', { p_id: id, p: { ...input, supplier: 'amazon', region: 'US' } });
+    if (error) return done(error, 'That label is already in use.');
+    const savedId = (data as { id?: string } | null)?.id ?? id;
+    if (savedId) {
+      const { error: proxyError } = await ctx.db.rpc('dd_ops_set_account_proxy', { p_account: savedId, p_proxy: input.proxy_id || null });
+      if (proxyError) return { ok: false, error: `The account was saved, but the proxy was not attached. ${proxyError.message}` };
+    }
+    return { ok: true, error: '' };
   } catch {
     return FAILED;
+  }
+}
+
+// ---------------------------------------------------------------- Proxies
+
+/** Imports proxies from pasted or uploaded lines shaped host:port:username:password. Passwords go to the vault. */
+export async function importProxies(text: string, provider: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    if (!text.trim()) return { ok: false, error: 'Choose a file or paste the proxy lines first.' };
+    const { data, error } = await ctx.db.rpc('dd_ops_import_proxies', { p_text: text, p_provider: provider });
+    if (error) return done(error);
+    const r = (data ?? {}) as { added?: number; updated?: number; invalid?: number };
+    const parts = [`${r.added ?? 0} added`, `${r.updated ?? 0} updated`];
+    if (r.invalid) parts.push(`${r.invalid} lines skipped (expected host:port:username:password)`);
+    return { ok: true, error: '', secret: parts.join(', ') };
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function removeProxies(ids: string[]): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_remove_proxies', { p_ids: ids });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function listProxies(): Promise<OpsProxy[]> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return [];
+    const { data } = await ctx.db.rpc('dd_ops_proxies');
+    return (data as OpsProxy[] | null) ?? [];
+  } catch {
+    return [];
   }
 }
 

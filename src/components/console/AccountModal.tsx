@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { saveAccount, type AccountForm } from '@/app/(console)/actions';
-import type { OpsAccount, OpsAccounts } from '@/lib/types';
+import { listProxies, saveAccount, type AccountForm } from '@/app/(console)/actions';
+import type { OpsAccount, OpsAccounts, OpsProxy } from '@/lib/types';
 import { btn, btnAccent, ErrorNote, field, label } from './ui';
 
 type Tab = 'details' | 'payment' | 'assignment' | 'settings';
@@ -26,6 +26,7 @@ function startingForm(a: OpsAccount | null): AccountForm {
     card_id: a?.card_id ?? '',
     box_id: a?.box_id ?? '',
     proxy_label: a?.proxy_label ?? '',
+    proxy_id: '',
     visibility: a?.visibility ?? 'public',
     allowed_clients: a?.allowed_clients ?? [],
     max_pending_orders: a?.max_pending_orders != null ? String(a.max_pending_orders) : '',
@@ -56,6 +57,20 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
   const [error, setError] = useState('');
   const set = (p: Partial<AccountForm>) => setForm((f) => ({ ...f, ...p }));
   const editing = account !== null;
+  const [proxies, setProxies] = useState<OpsProxy[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void listProxies().then((list) => {
+      if (!live) return;
+      setProxies(list);
+      const mine = account ? list.find((p) => p.account_id === account.id) : undefined;
+      if (mine) setForm((f) => ({ ...f, proxy_id: mine.id }));
+    });
+    return () => {
+      live = false;
+    };
+  }, [account]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,6 +81,10 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
   }, [onClose]);
 
   const submit = async () => {
+    if (proxies === null) {
+      setError('Still loading the proxy list. Try again in a moment.');
+      return;
+    }
     if (!form.label.trim() || !form.login_email.trim()) {
       setTab('details');
       setError('Add a label and the Amazon sign-in email first.');
@@ -253,9 +272,21 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                 </div>
                 <div>
                   <label htmlFor="am-proxy" className={label}>
-                    Proxy label (optional)
+                    Dedicated proxy
                   </label>
-                  <input id="am-proxy" maxLength={40} placeholder="proxy-01" value={form.proxy_label} onChange={(e) => set({ proxy_label: e.target.value })} className={field} />
+                  <select id="am-proxy" disabled={proxies === null} value={form.proxy_id} onChange={(e) => set({ proxy_id: e.target.value })} className={field}>
+                    <option value="">{proxies === null ? 'Loading proxies' : 'No proxy'}</option>
+                    {(proxies ?? [])
+                      .filter((p) => !p.account_id || p.account_id === account?.id)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label} · {p.host}:{p.port}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1.5 text-[13px] text-muted">
+                    {proxies && proxies.length === 0 ? 'Import proxies in Settings first.' : `${(proxies ?? []).filter((p) => !p.account_id).length} free in the library. One proxy per account.`}
+                  </p>
                 </div>
                 <fieldset className="sm:col-span-2">
                   <legend className={label}>Access</legend>
