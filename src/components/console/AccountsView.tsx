@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addAccount, updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { AccountStatus, OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, label, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
 import { useLive, useNow } from './useLive';
+import { AccountModal } from './AccountModal';
 
 type Filter = 'all' | 'ready' | 'attention' | 'paused' | 'unassigned';
 
@@ -24,7 +25,6 @@ function tone(a: OpsAccount): string {
   return TONE.muted;
 }
 
-const BLANK = { label: '', login_email: '', daily_order_cap: 5, card_bank: '', card_last4: '', proxy_label: '', box_id: '', totp_secret: '' };
 
 export function AccountsView({ initial, initialError }: { initial: OpsAccounts; initialError: string }) {
   const { data, error, setError, refresh } = useLive<OpsAccounts>('dd_ops_accounts', undefined, initial, initialError);
@@ -33,7 +33,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [open, setOpen] = useState('');
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState(BLANK);
+  const [editId, setEditId] = useState('');
   const [capDraft, setCapDraft] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState('');
 
@@ -107,91 +107,27 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   return (
     <>
       <PageHead title="Accounts" hint="The Amazon account library. Every account belongs to the platform and places orders for any client.">
-        <button type="button" className={btnAccent} onClick={() => setAdding(!adding)}>
-          {adding ? 'Close' : 'Add account'}
+        <button type="button" className={btnAccent} onClick={() => setAdding(true)}>
+          Add account
         </button>
       </PageHead>
       <ErrorNote message={error} />
 
-      {adding ? (
-        <form
-          className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-line bg-panel p-5"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const ok = await run(() => addAccount({ ...form, daily_order_cap: Number(form.daily_order_cap) }));
-            if (ok) {
-              setForm(BLANK);
-              setAdding(false);
-            }
+      {adding || editId ? (
+        <AccountModal
+          key={editId || 'new'}
+          account={data.accounts.find((x) => x.id === editId) ?? null}
+          data={data}
+          onClose={() => {
+            setAdding(false);
+            setEditId('');
           }}
-        >
-          <div className="flex-1 basis-32">
-            <label htmlFor="a-label" className={label}>
-              Label
-            </label>
-            <input id="a-label" required maxLength={40} placeholder="AMZ-01" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className={field} />
-          </div>
-          <div className="flex-[2] basis-56">
-            <label htmlFor="a-email" className={label}>
-              Amazon login email
-            </label>
-            <input id="a-email" type="email" placeholder="buyer01@yourdomain.com" value={form.login_email} onChange={(e) => setForm({ ...form, login_email: e.target.value })} className={field} />
-          </div>
-          <div className="basis-28">
-            <label htmlFor="a-cap" className={label}>
-              Orders / day
-            </label>
-            <input id="a-cap" type="number" min={1} value={form.daily_order_cap} onChange={(e) => setForm({ ...form, daily_order_cap: Number(e.target.value) })} className={field} />
-          </div>
-          <div className="flex-1 basis-28">
-            <label htmlFor="a-bank" className={label}>
-              Card bank
-            </label>
-            <input id="a-bank" maxLength={30} placeholder="AMEX" value={form.card_bank} onChange={(e) => setForm({ ...form, card_bank: e.target.value })} className={field} />
-          </div>
-          <div className="basis-24">
-            <label htmlFor="a-last4" className={label}>
-              Last 4
-            </label>
-            <input id="a-last4" inputMode="numeric" maxLength={4} placeholder="1003" value={form.card_last4} onChange={(e) => setForm({ ...form, card_last4: e.target.value })} className={field} />
-          </div>
-          <div className="flex-1 basis-28">
-            <label htmlFor="a-proxy" className={label}>
-              Proxy label
-            </label>
-            <input id="a-proxy" maxLength={40} placeholder="proxy-01" value={form.proxy_label} onChange={(e) => setForm({ ...form, proxy_label: e.target.value })} className={field} />
-          </div>
-          <div className="flex-1 basis-36">
-            <label htmlFor="a-box" className={label}>
-              VPS box
-            </label>
-            <select id="a-box" value={form.box_id} onChange={(e) => setForm({ ...form, box_id: e.target.value })} className={field}>
-              <option value="">Unassigned</option>
-              {data.boxes.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex-[2] basis-72">
-            <label htmlFor="a-totp" className={label}>
-              Amazon two-step key (optional)
-            </label>
-            <input
-              id="a-totp"
-              type="password"
-              autoComplete="off"
-              placeholder="The text key from Can't scan the barcode?"
-              value={form.totp_secret}
-              onChange={(e) => setForm({ ...form, totp_secret: e.target.value })}
-              className={field}
-            />
-          </div>
-          <button type="submit" disabled={busy} className={btnAccent}>
-            {form.totp_secret.trim() ? 'Save and start generating' : 'Save account'}
-          </button>
-        </form>
+          onSaved={() => {
+            setAdding(false);
+            setEditId('');
+            void refresh();
+          }}
+        />
       ) : null}
 
       <section aria-label="Account health" className="mb-5 flex flex-wrap gap-3">
@@ -246,7 +182,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                       a.login_email,
                       a.box_name ? `${a.box_name}${a.box_online ? '' : ' (offline)'}` : 'no box assigned',
                       cardLabel(a.card_bank, a.card_last4) !== '—' ? cardLabel(a.card_bank, a.card_last4) : null,
-                      a.reserved_for_name ? `reserved for ${a.reserved_for_name}` : null,
+                      a.visibility === 'private' ? `private · ${a.allowed_names.length ? a.allowed_names.join(', ') : 'no clients picked yet'}` : 'public',
                     ]
                       .filter(Boolean)
                       .join(' · ')}
@@ -306,19 +242,6 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                       ))}
                     </select>
                   </div>
-                  <div className="basis-44">
-                    <label htmlFor={`rs-${a.id}`} className={label}>
-                      Reserved for
-                    </label>
-                    <select id={`rs-${a.id}`} value={a.reserved_for ?? ''} disabled={busy} onChange={(e) => void patch(a.id, { reserved_for: e.target.value || null })} className={field}>
-                      <option value="">Any client</option>
-                      {data.clients.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="basis-28">
                     <label htmlFor={`cp-${a.id}`} className={label}>
                       Orders / day
@@ -347,9 +270,14 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                   >
                     Save cap
                   </button>
+                  <button type="button" disabled={busy} className={btnAccent} onClick={() => setEditId(a.id)}>
+                    Edit details
+                  </button>
                   <div className="basis-full font-mono text-xs text-muted">
                     {a.orders_total} orders all time · {a.open_issues} open issues · proxy {a.proxy_label ?? 'none'} · two-step codes{' '}
-                    {a.totp_enabled ? 'generating' : 'off (set a key in settings)'}
+                    {a.totp_enabled ? 'generating' : 'off'} · password {a.password_set ? 'saved' : 'not set'} · {a.awaiting_tracking}
+                    {a.max_pending_orders ? ` / ${a.max_pending_orders}` : ''} awaiting tracking · price limit{' '}
+                    {a.daily_spend_cap ? money(Number(a.daily_spend_cap)) : 'none'}
                   </div>
                 </div>
               ) : null}
@@ -358,7 +286,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
         })}
         {rows.length === 0 ? (
           <div className="px-5 py-12 text-center font-mono text-[13px] text-muted">
-            {data.accounts.length === 0 ? 'no accounts yet. add your first one above.' : 'no accounts in this view.'}
+            {data.accounts.length === 0 ? 'no accounts yet. add your first one with Add account.' : 'no accounts in this view.'}
           </div>
         ) : null}
       </Card>

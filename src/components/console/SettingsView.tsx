@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { clearTotp, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearTotp, removeCard, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
-import type { ContaboStatus } from '@/lib/types';
+import type { ContaboStatus, OpsCard } from '@/lib/types';
 import { btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
 
 const ZONES = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu', 'UTC'];
@@ -17,6 +17,7 @@ export function SettingsView({
   initialError,
   contabo,
   twoStep,
+  cards,
 }: {
   selectors: SelectorRow[];
   operators: string[];
@@ -24,6 +25,7 @@ export function SettingsView({
   initialError: string;
   contabo: ContaboStatus | null;
   twoStep: { id: string; label: string; totp_enabled: boolean; totp_set_at: string | null }[];
+  cards: OpsCard[];
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -54,6 +56,7 @@ export function SettingsView({
   const connected = contabo?.connected === true;
   const [keyFor, setKeyFor] = useState('');
   const [keyDraft, setKeyDraft] = useState('');
+  const [card, setCard] = useState({ bank: '', last4: '', nickname: '' });
   const generating = twoStep.filter((x) => x.totp_enabled).length;
 
   const save = async (work: () => Promise<{ ok: boolean; error: string }>) => {
@@ -179,6 +182,70 @@ export function SettingsView({
                 </div>
               </form>
             )}
+          </div>
+        </Card>
+
+        <Card title="cards">
+          <div className="px-5 pt-4">
+            <p className="text-[13px] text-muted">
+              The card library. Add each card once as bank and last 4, then pick it on any account. The card itself lives in the Amazon account, so no card
+              number is ever kept here.
+            </p>
+          </div>
+          <div className="px-5 py-3">
+            {cards.length === 0 ? <div className="py-2 font-mono text-[13px] text-muted">no cards yet.</div> : null}
+            {cards.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center gap-x-3.5 gap-y-2 border-b border-divider py-2.5 last:border-b-0">
+                <span className="font-mono text-[14px]">
+                  {c.bank} {c.last4}
+                </span>
+                <span className="font-mono text-[13px] text-muted">
+                  {[c.nickname, `${c.accounts} account${Number(c.accounts) === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className={`${btnDanger} ml-auto`}
+                  onClick={() => {
+                    if (!window.confirm(`Remove ${c.bank} ${c.last4} from the library? Accounts using it go back to no card selected.`)) return;
+                    void save(() => removeCard(c.id));
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <form
+              className="mt-3 flex flex-wrap items-end gap-3"
+              autoComplete="off"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const ok = await save(() => addCard(card.bank, card.last4, card.nickname));
+                if (ok) setCard({ bank: '', last4: '', nickname: '' });
+              }}
+            >
+              <div className="basis-36">
+                <label htmlFor="cd-bank" className={label}>
+                  Bank
+                </label>
+                <input id="cd-bank" required maxLength={30} placeholder="AMEX" value={card.bank} onChange={(e) => setCard({ ...card, bank: e.target.value })} className={field} />
+              </div>
+              <div className="basis-28">
+                <label htmlFor="cd-last4" className={label}>
+                  Last 4
+                </label>
+                <input id="cd-last4" required inputMode="numeric" maxLength={4} placeholder="1003" value={card.last4} onChange={(e) => setCard({ ...card, last4: e.target.value })} className={`${field} font-mono`} />
+              </div>
+              <div className="flex-1 basis-48">
+                <label htmlFor="cd-nick" className={label}>
+                  Nickname (optional)
+                </label>
+                <input id="cd-nick" maxLength={40} placeholder="Business Gold" value={card.nickname} onChange={(e) => setCard({ ...card, nickname: e.target.value })} className={field} />
+              </div>
+              <button type="submit" disabled={busy} className={btnAccent}>
+                Add card
+              </button>
+            </form>
           </div>
         </Card>
 

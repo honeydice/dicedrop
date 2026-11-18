@@ -1,6 +1,6 @@
 import { SettingsView } from '@/components/console/SettingsView';
 import { createClient } from '@/lib/supabase/server';
-import type { ContaboStatus, OpsAccounts } from '@/lib/types';
+import type { ContaboStatus, OpsAccounts, OpsCard } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +17,7 @@ export default async function SettingsPage() {
   let error = '';
   let contabo: ContaboStatus | null = null;
   let twoStep: { id: string; label: string; totp_enabled: boolean; totp_set_at: string | null }[] = [];
+  let cards: OpsCard[] = [];
   try {
     const supabase = createClient();
     const [s, o, p, c, a] = await Promise.all([
@@ -27,6 +28,7 @@ export default async function SettingsPage() {
       supabase.rpc('dd_ops_accounts'),
     ]);
     twoStep = ((a.data as OpsAccounts | null)?.accounts ?? []).map((x) => ({ id: x.id, label: x.label, totp_enabled: x.totp_enabled, totp_set_at: x.totp_set_at }));
+    cards = (a.data as OpsAccounts | null)?.cards ?? [];
     contabo = (c.data as ContaboStatus | null) ?? null;
     selectors = (s.data as SelectorRow[] | null) ?? [];
     operators = (o.data as { email: string | null }[] | null) ?? [];
@@ -36,5 +38,5 @@ export default async function SettingsPage() {
     error = 'Could not load settings. Refresh to try again.';
   }
 
-  return <SettingsView selectors={selectors} operators={operators.map((x) => x.email ?? '')} timezone={timezone} initialError={error} contabo={contabo} twoStep={twoStep} />;
+  return <SettingsView selectors={selectors} operators={operators.map((x) => x.email ?? '')} timezone={timezone} initialError={error} contabo={contabo} twoStep={twoStep} cards={cards} />;
 }

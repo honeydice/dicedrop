@@ -144,8 +144,20 @@ export interface OpsAccount {
   box_id: string | null;
   box_name: string | null;
   box_online: boolean | null;
-  reserved_for: string | null;
-  reserved_for_name: string | null;
+  visibility: 'public' | 'private';
+  allowed_clients: string[];
+  allowed_names: string[];
+  supplier: string;
+  region: string;
+  billing_name: string | null;
+  billing_zip: string | null;
+  billing_phone: string | null;
+  card_id: string | null;
+  max_pending_orders: number | null;
+  auto_tracking: boolean;
+  order_scan: boolean;
+  password_set: boolean;
+  awaiting_tracking: number;
   orders_today: number;
   spent_today: number;
   orders_total: number;
@@ -161,6 +173,15 @@ export interface OpsAccounts {
   totp_expires_in: number;
   boxes: Named[];
   clients: Named[];
+  cards: OpsCard[];
+}
+
+export interface OpsCard {
+  id: string;
+  bank: string;
+  last4: string;
+  nickname: string | null;
+  accounts: number;
 }
 
 export type BoxState = 'run' | 'pause' | 'drain';

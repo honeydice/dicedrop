@@ -148,7 +148,6 @@ export interface AccountPatch {
   status?: 'warming' | 'active' | 'paused' | 'locked';
   box_id?: string | null;
   daily_order_cap?: number;
-  reserved_for?: string | null;
 }
 
 export async function updateAccount(id: string, patch: AccountPatch): Promise<Result> {
@@ -158,7 +157,6 @@ export async function updateAccount(id: string, patch: AccountPatch): Promise<Re
     const clean: Record<string, unknown> = {};
     if (patch.status) clean.status = patch.status;
     if (patch.box_id !== undefined) clean.box_id = patch.box_id || null;
-    if (patch.reserved_for !== undefined) clean.reserved_for = patch.reserved_for || null;
     if (patch.daily_order_cap !== undefined) {
       const cap = Math.floor(Number(patch.daily_order_cap));
       if (!Number.isFinite(cap) || cap < 1) return { ok: false, error: 'Daily order cap must be 1 or more.' };
@@ -166,6 +164,77 @@ export async function updateAccount(id: string, patch: AccountPatch): Promise<Re
     }
     if (Object.keys(clean).length === 0) return { ok: true, error: '' };
     const { error } = await ctx.db.from('buyer_accounts').update(clean).eq('id', id);
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** Everything on the Add account form. Blank password or two-step key on an edit leaves the saved one as it is. */
+export interface AccountForm {
+  label: string;
+  login_email: string;
+  password: string;
+  billing_name: string;
+  billing_zip: string;
+  billing_phone: string;
+  totp_secret: string;
+  card_id: string;
+  box_id: string;
+  proxy_label: string;
+  visibility: 'public' | 'private';
+  allowed_clients: string[];
+  max_pending_orders: string;
+  daily_spend_cap: string;
+  daily_order_cap: string;
+  auto_tracking: boolean;
+  order_scan: boolean;
+}
+
+/** Creates (id null) or updates a buyer account. The password and two-step key are stored encrypted in the database vault. */
+export async function saveAccount(id: string | null, input: AccountForm): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    if (!input.label.trim()) return { ok: false, error: 'Give the account a label, like "AMZ-01".' };
+    if (!input.login_email.trim()) return { ok: false, error: 'The Amazon sign-in email is required.' };
+    for (const [name, value] of [
+      ['Max pending orders', input.max_pending_orders],
+      ['Daily orders price limit', input.daily_spend_cap],
+      ['Orders per day', input.daily_order_cap],
+    ] as const) {
+      if (value.trim() && !(Number(value) > 0)) return { ok: false, error: `${name} must be a number above 0, or left blank.` };
+    }
+    const { error } = await ctx.db.rpc('dd_ops_save_account', { p_id: id, p: { ...input, supplier: 'amazon', region: 'US' } });
+    return done(error, 'That label is already in use.');
+  } catch {
+    return FAILED;
+  }
+}
+
+// ---------------------------------------------------------------- Cards
+
+/** The card library holds the bank and last 4 only, so accounts can be tagged with the card they pay with. */
+export async function addCard(bank: string, last4: string, nickname: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const cleanBank = bank.trim().toUpperCase();
+    const digits = last4.trim();
+    if (!cleanBank) return { ok: false, error: 'Add the bank, like "AMEX".' };
+    if (!/^[0-9]{4}$/.test(digits)) return { ok: false, error: 'Last 4 should be exactly four digits.' };
+    const { error } = await ctx.db.from('cards').insert({ bank: cleanBank, last4: digits, nickname: nickname.trim() || null });
+    return done(error, 'That card is already in the library.');
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function removeCard(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.from('cards').delete().eq('id', id);
     return done(error);
   } catch {
     return FAILED;
