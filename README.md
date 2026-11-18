@@ -1,34 +1,31 @@
-# DiceDrop v0.1.4
+# DiceDrop v0.2.0
 
-The DiceDrop Control Tower: a live order board, an admin back room, and the API that connected apps use to send orders.
+DiceDrop is an order automation system. Clients send orders through an API, a pool of buyer accounts running on worker boxes places them, and one operator console shows the health of the whole thing.
 
-This release is the dash and database. The Worker (which places orders on Amazon) and the Monitor arrive in later versions and plug into the same database.
+Clients never sign in. Only operators use the console.
 
-## What is in this version
+## The three parts
 
-- **Order board** (`/`): live status tabs (Pending, Ordering, Ordered, Shipped, Delivered, Issues), search, the spend strip (Spent today, Pending estimate, Projected today), and backup controls (Retry, Hold, Cancel) on each row.
-- **Admin** (`/admin`): API keys, the connect snippet, buyer accounts, boxes, and selectors.
-- **API** (`/api/v1`): send, look up, cancel, hold, and retry orders with one API key.
-- **Platform** (`/platform`): the owner view across every workspace and user, with pause and resume per workspace. Only platform owners (rows in `platform_admins`) see it.
-- **Workspaces**: every order, account, and key belongs to a workspace, and each workspace only sees its own data.
+| Part | Status | What it is |
+|---|---|---|
+| **Operator console + database** | Live | This repo. The console, the client API, and the worker API. |
+| **Worker** | Next | Runs on each VPS box and places orders. Talks to the worker API. |
+| **Monitor** | Later | Watches prices and stock. |
 
-## Setup (about 10 minutes)
+## The console
 
-1. **Create a Supabase project** named DiceDrop, separate from DiceOps.
-2. **Run the schema.** Open the SQL editor, paste all of `supabase/schema.sql`, and run it.
-3. **Create a GitHub repo** named `dicedrop` and upload this folder.
-4. **Deploy on Vercel.** Import the repo and add two environment variables (values are in Supabase under Project Settings > API):
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+| Page | What it answers |
+|---|---|
+| **Overview** (`/`) | Is the system healthy right now? Order flow, issues, boxes, accounts, and who is ordering. |
+| **Orders** (`/orders`) | Every order from every client. Filter by client, status, or search. Click a row for details and retry, hold, cancel. |
+| **Clients** (`/clients`) | Who sends orders. Add a client, create or switch off its API keys, pause or resume it. |
+| **Accounts** (`/accounts`) | The buyer account library: health, daily load, box assignment, and optional "reserved for" a client. |
+| **VPS** (`/vps`) | Every box: connection, what it is placing, what is next in line, its accounts, and run, pause, drain controls. |
+| **Settings** (`/settings`) | Light or dark theme, the day boundary time zone, selectors, and the operator list. |
 
-   No privileged database key is needed. API keys are verified inside the database by the `dd_api_*` functions.
-5. **Open the site**, choose "Create an account", then name your workspace.
-6. **Optional:** run `supabase/sample_orders.sql` to drop a few sample orders onto the board.
-7. **Create an API key** in Admin. Copy it right away; it is shown once.
+## Client API (`/api/v1`)
 
-## API
-
-All requests use `Authorization: Bearer <your key>`.
+All requests use `Authorization: Bearer dd_live_...`.
 
 | Call | What it does |
 |---|---|
@@ -38,35 +35,37 @@ All requests use `Authorization: Bearer <your key>`.
 | `POST /api/v1/orders/{id}/cancel` | Cancel (or request a cancel if already placed) |
 | `POST /api/v1/orders/{id}/hold` | Hold a pending or flagged order |
 | `POST /api/v1/orders/{id}/retry` | Send a flagged, held, or cancelled order back to pending |
-| `GET /api/health` | Version and connection check |
 
-Required fields when sending an order: `order_number`, `asin` (or `buy_url`), and `ship_to` with `name`, `line1`, `city`, `state`, `postal_code`.
+Required when sending an order: `order_number`, `asin` (or `buy_url`), and `ship_to` with `name`, `line1`, `city`, `state`, `postal_code`.
+Sending the same `order_number` (and `line_id`) twice returns the original order with `"duplicate": true`.
 
-Sending the same `order_number` (and `line_id`) twice returns the original order with `"duplicate": true`, so an order is never created twice.
+## Worker API (`/api/worker/v1`)
 
-### Test it
+Each box has its own token, created on the VPS page. All requests use `Authorization: Bearer ddbox_...`.
+Boxes only ever call out; nothing connects in to a box.
 
-```bash
-curl -X POST https://YOUR-DOMAIN/api/v1/orders \
-  -H "Authorization: Bearer dd_live_..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "order_number": "TEST-0001",
-    "title": "Test item",
-    "asin": "B000000000",
-    "sale_price": 29.99,
-    "sale_fees": 3.90,
-    "est_cost": 18.00,
-    "buyer": { "name": "Test Buyer", "username": "test_buyer" },
-    "ship_to": { "name": "Test Buyer", "line1": "100 Example St", "city": "Austin", "state": "TX", "postal_code": "73301" }
-  }'
+| Call | What it does |
+|---|---|
+| `POST /api/worker/v1/heartbeat` | Check in, report state and per-account sign-in status. Returns `desired_state` (`run`, `pause`, `drain`), the box's accounts, and the selectors. |
+| `POST /api/worker/v1/claim` | Ask for the next order. Returns `{ order, account }` or `{ order: null, reason }`. |
+| `POST /api/worker/v1/orders/{id}/report` | Report `placed`, `issue`, `release`, `shipped`, `delivered`, or `cancelled`. |
+| `GET /api/worker/v1/tracking` | Orders this box placed that still need a shipping or delivery check. |
+
+How an order is assigned: the oldest waiting order (earliest ship-by first) goes to a free account on the calling box that is active or warming, signed in, under its daily cap, and not already placing an order.
+
+## How it is secured
+
+- **Operators only.** Console data comes from database functions that check the caller is in `platform_admins`. A signed-in non-operator gets nothing.
+- **No privileged key in the app.** Client API keys and box tokens are stored as hashes and verified inside the database by the `dd_api_*` and `dd_worker_*` functions.
+- **Every action is stamped.** `order_events` records who did what and when: `api:<key>`, `worker:<box>`, or `user:<email>`.
+
+## Database
+
+`supabase/schema.sql` is the full schema through v0.1.x. `supabase/v0_2_0_operator_console.sql` is the v0.2.0 change. Run them in that order on a fresh project.
+
+Add an operator:
+
+```sql
+insert into public.platform_admins (user_id, email)
+select id, email from auth.users where email = 'you@example.com';
 ```
-
-The order appears on the board within a second.
-
-## Notes
-
-- **Spend strip:** "Spent today" totals the Amazon cost of orders placed since midnight in the workspace time zone (default `America/Chicago`; change it in the `workspaces` table).
-- **Tax estimate:** uses base state rates from the `state_tax_rates` table. Edit any row to tighten it.
-- **Who did what:** every action on an order is stamped in `order_events` with the actor and time.
-- **Webhooks:** each key stores a webhook URL and signing secret now; DiceDrop starts sending status updates when the Worker ships.

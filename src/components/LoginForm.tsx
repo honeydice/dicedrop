@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation';
 import { Logo } from '@/components/Logo';
 import { createClient } from '@/lib/supabase/client';
 
+/** Operator sign-in. There is no sign-up: operators are added by an existing operator. */
 export function LoginForm() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
-  const [mode, setMode] = useState<'in' | 'up'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
@@ -19,27 +19,10 @@ export function LoginForm() {
     setBusy(true);
     setMessage('');
     try {
-      if (mode === 'in') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-          setMessage(error.message);
-          return;
-        }
-      } else {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) {
-          setMessage(error.message);
-          return;
-        }
-        if (!data.session) {
-          setMessage('Account created. Check your email to confirm it, then sign in.');
-          setMode('in');
-          return;
-        }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setMessage(error.message);
+        return;
       }
       router.push('/');
       router.refresh();
@@ -58,22 +41,14 @@ export function LoginForm() {
         <Logo />
         <h1 className="font-display text-2xl font-bold tracking-tight">DiceDrop</h1>
       </div>
-      <p className="mt-2 text-muted">{mode === 'in' ? 'Sign in to the Control Tower.' : 'Create your account.'}</p>
+      <p className="mt-2 font-mono text-[13px] text-muted">operator console</p>
 
       <form onSubmit={submit} className="mt-8 space-y-4">
         <div>
           <label htmlFor="email" className="text-[13px] font-medium text-soft">
             Email
           </label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className={field}
-          />
+          <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={field} />
         </div>
         <div>
           <label htmlFor="password" className="text-[13px] font-medium text-soft">
@@ -82,9 +57,8 @@ export function LoginForm() {
           <input
             id="password"
             type="password"
-            autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
+            autoComplete="current-password"
             required
-            minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={field}
@@ -95,25 +69,10 @@ export function LoginForm() {
             {message}
           </div>
         ) : null}
-        <button
-          type="submit"
-          disabled={busy}
-          className="h-11 w-full rounded-[10px] bg-accent text-sm font-semibold text-onaccent disabled:opacity-60"
-        >
-          {busy ? 'One moment' : mode === 'in' ? 'Sign in' : 'Create account'}
+        <button type="submit" disabled={busy} className="h-11 w-full rounded-[10px] bg-accent text-sm font-semibold text-onaccent disabled:opacity-60">
+          {busy ? 'One moment' : 'Sign in'}
         </button>
       </form>
-
-      <button
-        type="button"
-        onClick={() => {
-          setMode(mode === 'in' ? 'up' : 'in');
-          setMessage('');
-        }}
-        className="mt-4 min-h-[44px] bg-transparent text-[13px] text-muted hover:text-strong"
-      >
-        {mode === 'in' ? 'New here? Create an account' : 'Already have an account? Sign in'}
-      </button>
     </main>
   );
 }
