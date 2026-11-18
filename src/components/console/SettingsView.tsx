@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { disconnectContabo, restoreContaboServers, saveContabo, setTimezone, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { clearTotp, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus } from '@/lib/types';
@@ -16,12 +16,14 @@ export function SettingsView({
   timezone,
   initialError,
   contabo,
+  twoStep,
 }: {
   selectors: SelectorRow[];
   operators: string[];
   timezone: string;
   initialError: string;
   contabo: ContaboStatus | null;
+  twoStep: { id: string; label: string; totp_enabled: boolean; totp_set_at: string | null }[];
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -50,6 +52,9 @@ export function SettingsView({
     }
   };
   const connected = contabo?.connected === true;
+  const [keyFor, setKeyFor] = useState('');
+  const [keyDraft, setKeyDraft] = useState('');
+  const generating = twoStep.filter((x) => x.totp_enabled).length;
 
   const save = async (work: () => Promise<{ ok: boolean; error: string }>) => {
     setBusy(true);
@@ -173,6 +178,94 @@ export function SettingsView({
                   </span>
                 </div>
               </form>
+            )}
+          </div>
+        </Card>
+
+        <Card title="two-step codes">
+          <div className="px-5 pt-4">
+            <p className="text-[13px] text-muted">
+              DiceDrop acts as the authenticator app for your Amazon accounts. In Amazon&apos;s two-step setup choose &quot;authenticator app&quot;, click
+              &quot;Can&apos;t scan the barcode?&quot;, and paste the text key here. The live 6-digit code then shows next to the account on the Accounts page,
+              and the account&apos;s box can pull it on its own when Amazon asks.
+            </p>
+            <div className="mt-2 font-mono text-xs text-muted">
+              {generating} of {twoStep.length} accounts generating
+            </div>
+          </div>
+          <div className="px-5 py-3">
+            {twoStep.length === 0 ? (
+              <div className="py-4 font-mono text-[13px] text-muted">no accounts yet. add one on the accounts page.</div>
+            ) : (
+              twoStep.map((acct) => (
+                <div key={acct.id} className="border-b border-divider py-2.5 last:border-b-0">
+                  <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+                    <Dot color={acct.totp_enabled ? TONE.good : TONE.muted} />
+                    <span className="font-mono text-[14px]">{acct.label}</span>
+                    <span className="font-mono text-[13px] text-muted">
+                      {acct.totp_enabled ? `generating since ${when(acct.totp_set_at)}` : 'no key yet'}
+                    </span>
+                    <span className="ml-auto flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className={btn}
+                        onClick={() => {
+                          setKeyFor(keyFor === acct.id ? '' : acct.id);
+                          setKeyDraft('');
+                        }}
+                      >
+                        {acct.totp_enabled ? 'Replace key' : 'Add key'}
+                      </button>
+                      {acct.totp_enabled ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={btnDanger}
+                          onClick={() => {
+                            if (!window.confirm(`Stop generating codes for ${acct.label}? The saved key is deleted.`)) return;
+                            void save(() => clearTotp(acct.id));
+                          }}
+                        >
+                          Stop
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                  {keyFor === acct.id ? (
+                    <form
+                      className="mt-3 flex flex-wrap items-end gap-3"
+                      autoComplete="off"
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        const ok = await save(() => setTotp(acct.id, keyDraft));
+                        if (ok) {
+                          setKeyFor('');
+                          setKeyDraft('');
+                        }
+                      }}
+                    >
+                      <div className="flex-1 basis-72">
+                        <label htmlFor={`totp-${acct.id}`} className={label}>
+                          Amazon two-step key for {acct.label}
+                        </label>
+                        <input
+                          id={`totp-${acct.id}`}
+                          type="password"
+                          autoComplete="off"
+                          value={keyDraft}
+                          onChange={(e) => setKeyDraft(e.target.value)}
+                          placeholder="Letters A-Z and numbers 2-7"
+                          className={`${field} font-mono`}
+                        />
+                      </div>
+                      <button type="submit" disabled={busy || !keyDraft.trim()} className={btnAccent}>
+                        Start generating
+                      </button>
+                    </form>
+                  ) : null}
+                </div>
+              ))
             )}
           </div>
         </Card>

@@ -6,5 +6,5 @@ export const dynamic = 'force-dynamic';
 
 export default async function AccountsPage() {
   const { data, error } = await loadRpc<OpsAccounts>('dd_ops_accounts');
-  return <AccountsView initial={data ?? { accounts: [], boxes: [], clients: [] }} initialError={error} />;
+  return <AccountsView initial={data ?? { accounts: [], boxes: [], clients: [], totp_expires_in: 30 }} initialError={error} />;
 }

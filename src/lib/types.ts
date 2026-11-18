@@ -151,10 +151,14 @@ export interface OpsAccount {
   orders_total: number;
   open_issues: number;
   current_order: string | null;
+  totp_enabled: boolean;
+  totp_set_at: string | null;
+  totp_code: string | null;
 }
 
 export interface OpsAccounts {
   accounts: OpsAccount[];
+  totp_expires_in: number;
   boxes: Named[];
   clients: Named[];
 }

@@ -105,6 +105,8 @@ export interface AccountInput {
   card_last4: string;
   proxy_label: string;
   box_id: string;
+  /** Optional Amazon two-step key. When given, code generation starts right away. */
+  totp_secret?: string;
 }
 
 export async function addAccount(input: AccountInput): Promise<Result> {
@@ -118,15 +120,24 @@ export async function addAccount(input: AccountInput): Promise<Result> {
     if (!Number.isFinite(cap) || cap < 1) return { ok: false, error: 'Daily order cap must be 1 or more.' };
     if (last4 && !/^[0-9]{4}$/.test(last4)) return { ok: false, error: 'Card last 4 should be exactly four digits.' };
 
-    const { error } = await ctx.db.from('buyer_accounts').insert({
-      label: labelText,
-      login_email: input.login_email.trim() || null,
-      daily_order_cap: cap,
-      card_bank: input.card_bank.trim() || null,
-      card_last4: last4 || null,
-      proxy_label: input.proxy_label.trim() || null,
-      box_id: input.box_id || null,
-    });
+    const { data: created, error } = await ctx.db
+      .from('buyer_accounts')
+      .insert({
+        label: labelText,
+        login_email: input.login_email.trim() || null,
+        daily_order_cap: cap,
+        card_bank: input.card_bank.trim() || null,
+        card_last4: last4 || null,
+        proxy_label: input.proxy_label.trim() || null,
+        box_id: input.box_id || null,
+      })
+      .select('id')
+      .single();
+    const key = (input.totp_secret ?? '').trim();
+    if (!error && created && key) {
+      const { error: totpError } = await ctx.db.rpc('dd_ops_set_totp', { p_account: created.id, p_secret: key });
+      if (totpError) return { ok: false, error: `The account was saved, but the two-step key was not accepted. ${totpError.message}` };
+    }
     return done(error, 'That label is already in use.');
   } catch {
     return FAILED;
@@ -155,6 +166,30 @@ export async function updateAccount(id: string, patch: AccountPatch): Promise<Re
     }
     if (Object.keys(clean).length === 0) return { ok: true, error: '' };
     const { error } = await ctx.db.from('buyer_accounts').update(clean).eq('id', id);
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** Stores an account's Amazon two-step key (encrypted) and starts generating codes. */
+export async function setTotp(accountId: string, secret: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    if (!secret.trim()) return { ok: false, error: 'Paste the two-step key first.' };
+    const { error } = await ctx.db.rpc('dd_ops_set_totp', { p_account: accountId, p_secret: secret });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function clearTotp(accountId: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_clear_totp', { p_account: accountId });
     return done(error);
   } catch {
     return FAILED;

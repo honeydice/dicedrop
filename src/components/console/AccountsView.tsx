@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { addAccount, updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { AccountStatus, OpsAccount, OpsAccounts } from '@/lib/types';
@@ -24,7 +24,7 @@ function tone(a: OpsAccount): string {
   return TONE.muted;
 }
 
-const BLANK = { label: '', login_email: '', daily_order_cap: 5, card_bank: '', card_last4: '', proxy_label: '', box_id: '' };
+const BLANK = { label: '', login_email: '', daily_order_cap: 5, card_bank: '', card_last4: '', proxy_label: '', box_id: '', totp_secret: '' };
 
 export function AccountsView({ initial, initialError }: { initial: OpsAccounts; initialError: string }) {
   const { data, error, setError, refresh } = useLive<OpsAccounts>('dd_ops_accounts', undefined, initial, initialError);
@@ -35,6 +35,34 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState(BLANK);
   const [capDraft, setCapDraft] = useState<Record<string, string>>({});
+  const [copied, setCopied] = useState('');
+
+  // Two-step codes rotate every 30 seconds. Count down locally and fetch fresh codes the moment they turn over.
+  const fetchedAt = useRef(Date.now());
+  const [left, setLeft] = useState(data.totp_expires_in ?? 30);
+  useEffect(() => {
+    fetchedAt.current = Date.now();
+    setLeft(data.totp_expires_in ?? 30);
+  }, [data]);
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const remaining = (data.totp_expires_in ?? 30) - Math.floor((Date.now() - fetchedAt.current) / 1000);
+      setLeft(Math.max(0, remaining));
+      if (remaining <= 0 && Date.now() - fetchedAt.current < 40000) void refresh();
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [data.totp_expires_in, refresh]);
+
+  const copyCode = async (a: OpsAccount) => {
+    if (!a.totp_code) return;
+    try {
+      await navigator.clipboard.writeText(a.totp_code);
+      setCopied(a.id);
+      setTimeout(() => setCopied(''), 1500);
+    } catch {
+      // Clipboard is unavailable; the code is still on screen to type by hand.
+    }
+  };
 
   const run = async (work: () => Promise<Result>): Promise<boolean> => {
     setBusy(true);
@@ -146,8 +174,22 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               ))}
             </select>
           </div>
+          <div className="flex-[2] basis-72">
+            <label htmlFor="a-totp" className={label}>
+              Amazon two-step key (optional)
+            </label>
+            <input
+              id="a-totp"
+              type="password"
+              autoComplete="off"
+              placeholder="The text key from Can't scan the barcode?"
+              value={form.totp_secret}
+              onChange={(e) => setForm({ ...form, totp_secret: e.target.value })}
+              className={field}
+            />
+          </div>
           <button type="submit" disabled={busy} className={btnAccent}>
-            Save account
+            {form.totp_secret.trim() ? 'Save and start generating' : 'Save account'}
           </button>
         </form>
       ) : null}
@@ -181,11 +223,12 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           const full = Number(a.orders_today) >= Number(a.daily_order_cap);
           return (
             <div key={a.id} className="border-b border-divider last:border-b-0">
+              <div className="flex items-stretch">
               <button
                 type="button"
                 aria-expanded={isOpen}
                 onClick={() => setOpen(isOpen ? '' : a.id)}
-                className="flex w-full items-start gap-3.5 bg-transparent px-5 py-3.5 text-left hover:bg-raised/60"
+                className="flex min-w-0 flex-1 items-start gap-3.5 bg-transparent px-5 py-3.5 text-left hover:bg-raised/60"
               >
                 <span className="mt-[7px]">
                   <Dot color={tone(a)} />
@@ -219,6 +262,23 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                   <span className="block text-xs text-muted">seen {a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'}</span>
                 </span>
               </button>
+              {a.totp_enabled ? (
+                <button
+                  type="button"
+                  onClick={() => void copyCode(a)}
+                  aria-label={`Copy the two-step code for ${a.label}`}
+                  title="Click to copy"
+                  className="flex shrink-0 flex-col items-end justify-center border-l border-divider bg-transparent px-5 font-mono hover:bg-raised/60"
+                >
+                  <span className="text-[18px] tracking-[0.14em] text-fg">
+                    {a.totp_code ? `${a.totp_code.slice(0, 3)} ${a.totp_code.slice(3)}` : '--- ---'}
+                  </span>
+                  <span className="text-[11px]" style={{ color: left <= 5 ? TONE.warn : TONE.muted }}>
+                    {copied === a.id ? 'copied' : `${left}s`}
+                  </span>
+                </button>
+              ) : null}
+              </div>
 
               {isOpen ? (
                 <div className="flex flex-wrap items-end gap-3 border-t border-divider px-5 pb-4 pl-[46px] pt-3">
@@ -288,7 +348,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     Save cap
                   </button>
                   <div className="basis-full font-mono text-xs text-muted">
-                    {a.orders_total} orders all time · {a.open_issues} open issues · proxy {a.proxy_label ?? 'none'}
+                    {a.orders_total} orders all time · {a.open_issues} open issues · proxy {a.proxy_label ?? 'none'} · two-step codes{' '}
+                    {a.totp_enabled ? 'generating' : 'off (set a key in settings)'}
                   </div>
                 </div>
               ) : null}

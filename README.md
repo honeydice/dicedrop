@@ -1,4 +1,4 @@
-# DiceDrop v0.3.1
+# DiceDrop v0.4.0
 
 DiceDrop is an order automation system. Clients send orders through an API, a pool of buyer accounts running on worker boxes places them, and one operator console shows the health of the whole thing.
 
@@ -50,8 +50,18 @@ Boxes only ever call out; nothing connects in to a box.
 | `POST /api/worker/v1/claim` | Ask for the next order. Returns `{ order, account }` or `{ order: null, reason }`. |
 | `POST /api/worker/v1/orders/{id}/report` | Report `placed`, `issue`, `release`, `shipped`, `delivered`, or `cancelled`. |
 | `GET /api/worker/v1/tracking` | Orders this box placed that still need a shipping or delivery check. |
+| `POST /api/worker/v1/totp` | Body `{ "account": "AMZ-01" }`. Returns the current two-step code for one of the box's own accounts. |
 
 How an order is assigned: the oldest waiting order (earliest ship-by first) goes to a free account on the calling box that is active or warming, signed in, under its daily cap, and not already placing an order.
+
+## Two-step codes
+
+DiceDrop is the authenticator for the buyer accounts. Each account's Amazon two-step key is stored encrypted in the database vault.
+Codes are standard time-based codes (RFC 6238: SHA-1, 30 seconds, 6 digits), computed inside the database.
+
+- **Settings > two-step codes**: add, replace, or stop a key per account.
+- **Accounts**: the live code shows next to each account and copies on click.
+- **Worker**: a box can request the code for its own accounts. It receives the 6 digits, never the key.
 
 ## How it is secured
 
