@@ -5,10 +5,9 @@ import { VERSION } from '@/lib/version';
 export function SetupNotice() {
   return (
     <main className="mx-auto max-w-xl px-6 py-16">
-      <div className="flex items-center gap-3">
-        <Logo />
-        <h1 className="font-display text-2xl font-bold">DiceDrop</h1>
-      </div>
+      <h1>
+        <Logo size={64} />
+      </h1>
       <p className="mt-6 text-base text-soft">Almost there. Connect DiceDrop to its database to bring the Control Tower online.</p>
       <ol className="mt-6 list-decimal space-y-3 pl-5 text-soft">
         <li>Create a new Supabase project named DiceDrop.</li>

@@ -37,11 +37,10 @@ export function LoginForm() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6 py-12">
-      <div className="flex items-center gap-3">
-        <Logo />
-        <h1 className="font-display text-2xl font-bold tracking-tight">DiceDrop</h1>
-      </div>
-      <p className="mt-2 font-mono text-[13px] text-muted">operator console</p>
+      <h1>
+        <Logo size={72} />
+      </h1>
+      <p className="mt-3 font-mono text-[13px] text-muted">operator console</p>
 
       <form onSubmit={submit} className="mt-8 space-y-4">
         <div>

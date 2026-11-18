@@ -1,10 +1,5 @@
-export function Logo({ size = 32 }: { size?: number }) {
-  return (
-    <svg aria-hidden="true" className="text-accent" width={size} height={size} viewBox="0 0 32 32" fill="none">
-      <rect x="3" y="3" width="26" height="26" rx="7" stroke="currentColor" strokeWidth="2.5" />
-      <circle cx="11" cy="11" r="2.2" fill="currentColor" />
-      <circle cx="16" cy="16" r="2.2" fill="currentColor" />
-      <circle cx="21" cy="21" r="2.2" fill="currentColor" />
-    </svg>
-  );
+/** The DiceDrop mark. It stands in for the name wherever the brand appears. */
+export function Logo({ size = 44 }: { size?: number }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/logo.png" alt="DiceDrop" width={size} height={size} className="shrink-0 select-none" draggable={false} />;
 }
