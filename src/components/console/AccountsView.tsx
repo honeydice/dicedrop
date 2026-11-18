@@ -36,6 +36,15 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [editId, setEditId] = useState('');
   const [capDraft, setCapDraft] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      await refresh();
+    } finally {
+      setTimeout(() => setSyncing(false), 400);
+    }
+  };
 
   // Two-step codes rotate every 30 seconds. Count down locally and fetch fresh codes the moment they turn over.
   const fetchedAt = useRef(Date.now());
@@ -157,63 +166,69 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
         {rows.map((a) => {
           const isOpen = open === a.id;
           const full = Number(a.orders_today) >= Number(a.daily_order_cap);
+          const connected = a.box_online === true && a.status !== 'paused' && !needsAttention(a);
           return (
             <div key={a.id} className="border-b border-divider last:border-b-0">
-              <div className="flex items-stretch">
-              <button
-                type="button"
-                aria-expanded={isOpen}
-                onClick={() => setOpen(isOpen ? '' : a.id)}
-                className="flex min-w-0 flex-1 items-start gap-3.5 bg-transparent px-5 py-3.5 text-left hover:bg-raised/60"
-              >
-                <span className="mt-[7px]">
-                  <Dot color={tone(a)} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-baseline gap-x-3 font-mono text-[15px]">
-                    <span className="text-fg">{a.label}</span>
-                    <span className="text-[13px]" style={{ color: a.status === 'paused' ? TONE.muted : sessionTone(a.session_state) }}>
-                      {a.status === 'paused' ? 'paused' : a.status === 'locked' ? 'locked' : sessionLabel(a.session_state)}
-                    </span>
-                    {a.status === 'warming' ? <span className="text-[13px] text-muted">warming</span> : null}
-                  </span>
-                  <span className="mt-1 block text-[13px] text-muted">
-                    {[
-                      a.login_email,
-                      a.box_name ? `${a.box_name}${a.box_online ? '' : ' (offline)'}` : 'no box assigned',
-                      cardLabel(a.card_bank, a.card_last4) !== '—' ? cardLabel(a.card_bank, a.card_last4) : null,
-                      a.visibility === 'private' ? `private · ${a.allowed_names.length ? a.allowed_names.join(', ') : 'no clients picked yet'}` : 'public',
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                  {a.last_error ? <span className="mt-1 block text-[13px] text-bad">{a.last_error}</span> : null}
-                  {a.current_order ? <span className="mt-1 block font-mono text-[13px] text-muted">placing {a.current_order}</span> : null}
-                </span>
-                <span className="shrink-0 text-right font-mono">
-                  <span className="block text-[13px]" style={{ color: full ? TONE.warn : undefined }}>
-                    {a.orders_today} / {a.daily_order_cap} today
-                  </span>
-                  <span className="mt-1 block text-[13px] text-muted">{money(Number(a.spent_today))}</span>
-                  <span className="block text-xs text-muted">seen {a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'}</span>
-                </span>
-              </button>
-              {a.totp_enabled ? (
+              <div className="flex items-center">
                 <button
                   type="button"
-                  onClick={() => void copyCode(a)}
-                  aria-label={`Copy the two-step code for ${a.label}`}
-                  title="Click to copy"
-                  className="flex shrink-0 flex-col items-end justify-center border-l border-divider bg-transparent px-5 font-mono hover:bg-raised/60"
+                  aria-expanded={isOpen}
+                  onClick={() => setOpen(isOpen ? '' : a.id)}
+                  className="flex min-w-0 flex-1 flex-wrap items-center gap-x-8 gap-y-1 bg-transparent px-6 py-4 text-left hover:bg-raised/60"
                 >
-                  <span className="text-[18px] tracking-[0.14em] text-fg">
-                    {a.totp_code ? `${a.totp_code.slice(0, 3)} ${a.totp_code.slice(3)}` : '--- ---'}
+                  <span className="flex min-w-[220px] items-center gap-3.5">
+                    <Dot color={connected ? TONE.good : TONE.bad} />
+                    <span className="font-mono text-[16px] text-fg">{a.label}</span>
+                    <span className="font-mono text-[13px]" style={{ color: connected ? TONE.good : TONE.bad }}>
+                      {a.status === 'paused' ? 'paused' : a.status === 'locked' ? 'locked' : connected ? 'connected' : 'not connected'}
+                    </span>
                   </span>
-                  <span className="text-[11px]" style={{ color: left <= 5 ? TONE.warn : TONE.muted }}>
-                    {copied === a.id ? 'copied' : `${left}s`}
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
+                    {[a.login_email, a.box_name ?? 'no VPS', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'].filter(Boolean).join('  ·  ')}
+                    {a.last_error ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
+                    {a.current_order ? <span className="ml-3 font-mono">placing {a.current_order}</span> : null}
+                  </span>
+                  <span className="shrink-0 font-mono text-[13px]" style={{ color: full ? TONE.warn : undefined }}>
+                    {a.orders_today} / {a.daily_order_cap} today
                   </span>
                 </button>
-              ) : null}
+                <div className="flex w-[230px] shrink-0 items-center justify-end gap-2 pr-5">
+                  {a.totp_enabled ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void copyCode(a)}
+                        aria-label={`Copy the two-step code for ${a.label}`}
+                        title="Click to copy"
+                        className="min-h-[44px] bg-transparent px-2 text-right font-mono"
+                      >
+                        <span className="block text-[20px] tracking-[0.14em] text-fg">{a.totp_code ? `${a.totp_code.slice(0, 3)} ${a.totp_code.slice(3)}` : '--- ---'}</span>
+                        <span className="mt-1 block h-[3px] w-full overflow-hidden rounded-full bg-chip">
+                          <span className="block h-full rounded-full transition-[width] duration-1000 ease-linear" style={{ width: `${(left / 30) * 100}%`, background: left <= 5 ? TONE.warn : TONE.good }} />
+                        </span>
+                        <span className="mt-0.5 block text-[11px]" style={{ color: left <= 5 ? TONE.warn : TONE.muted }}>
+                          {copied === a.id ? 'copied' : `live · ${left}s`}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Refresh the code"
+                        title="Refresh"
+                        disabled={syncing}
+                        onClick={() => void syncNow()}
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-edge bg-raised text-[18px] text-fg disabled:opacity-40"
+                      >
+                        <span aria-hidden="true" className={syncing ? 'animate-spin' : ''}>
+                          ↻
+                        </span>
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" className={btn} onClick={() => setEditId(a.id)}>
+                      Add code key
+                    </button>
+                  )}
+                </div>
               </div>
 
               {isOpen ? (
@@ -274,7 +289,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     Edit details
                   </button>
                   <div className="basis-full font-mono text-xs text-muted">
-                    {a.orders_total} orders all time · {a.open_issues} open issues · proxy {a.proxy_label ?? 'none'} · two-step codes{' '}
+                    {money(Number(a.spent_today))} spent today · seen {a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'} · {sessionLabel(a.session_state)}
+                    {a.status === 'warming' ? ' · warming' : ''} · {a.card_bank ? cardLabel(a.card_bank, a.card_last4) : 'no card'} · {a.orders_total} orders all time · {a.open_issues} open issues · proxy {a.proxy_label ?? 'none'} · two-step codes{' '}
                     {a.totp_enabled ? 'generating' : 'off'} · password {a.password_set ? 'saved' : 'not set'} · {a.awaiting_tracking}
                     {a.max_pending_orders ? ` / ${a.max_pending_orders}` : ''} awaiting tracking · price limit{' '}
                     {a.daily_spend_cap ? money(Number(a.daily_spend_cap)) : 'none'}

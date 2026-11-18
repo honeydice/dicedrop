@@ -1,3 +1,4 @@
+import { PageWidth } from '@/components/console/PageWidth';
 import { redirect } from 'next/navigation';
 import { signOut } from '@/app/actions';
 import { SideNav } from '@/components/console/SideNav';
@@ -55,7 +56,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         </div>
       </aside>
       <main className="min-w-0 flex-1 px-5 pb-10 pt-6 sm:px-8">
-        <div className="mx-auto max-w-[1280px]">{children}</div>
+        <PageWidth>{children}</PageWidth>
       </main>
     </div>
   );
