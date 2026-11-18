@@ -5,6 +5,7 @@ import { createBox, deleteBox, rotateBoxToken, serverPower, setBoxState, syncCon
 import { timeAgo } from '@/lib/format';
 import type { BoxState, OpsBox, OpsBoxes } from '@/lib/types';
 import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
+import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 
 function connTone(b: OpsBox): string {
@@ -39,6 +40,7 @@ function specs(b: OpsBox): string {
 
 export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialError: string }) {
   const { data, error, setError, refresh } = useLive<OpsBoxes>('dd_ops_boxes', undefined, initial, initialError, 5000);
+  const { shown: shownBoxes, pager } = usePaged(data.boxes);
   const now = useNow();
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
@@ -161,7 +163,7 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
 
       {data.boxes.length > 0 ? (
       <Card title="GET /vps" right={<Badge>{data.boxes.length}</Badge>}>
-        {data.boxes.map((b) => {
+        {shownBoxes.map((b) => {
           const isOpen = open === b.id;
           const attention = b.accounts.filter((x) => x.status === 'locked' || x.session_state === 'needs_sign_in' || x.session_state === 'verification' || x.session_state === 'locked').length;
           const problem = Boolean(b.last_error || b.server_error) || attention > 0 || b.working.some((w) => w.stuck);
@@ -352,6 +354,7 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
           </div>
           );
         })}
+        {pager}
       </Card>
       ) : null}
     </>

@@ -5,6 +5,7 @@ import { updateAccount, type AccountPatch, type Result } from '@/app/(console)/a
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { AccountStatus, OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, label, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
+import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 import { AccountModal } from './AccountModal';
 
@@ -110,6 +111,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     return true;
   });
 
+  const { shown, pager } = usePaged(rows, filter);
   const ordersToday = data.accounts.reduce((sum, a) => sum + Number(a.orders_today), 0);
   const capacity = data.accounts.filter((a) => a.status === 'active' || a.status === 'warming').reduce((sum, a) => sum + Number(a.daily_order_cap), 0);
 
@@ -163,7 +165,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       </div>
 
       <Card title={`GET /accounts${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{rows.length}</Badge>}>
-        {rows.map((a) => {
+        {shown.map((a) => {
           const isOpen = open === a.id;
           const full = Number(a.orders_today) >= Number(a.daily_order_cap);
           const connected = a.box_online === true && a.status !== 'paused' && !needsAttention(a);
@@ -305,6 +307,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             {data.accounts.length === 0 ? 'no accounts yet. add your first one with Add account.' : 'no accounts in this view.'}
           </div>
         ) : null}
+        {pager}
       </Card>
     </>
   );

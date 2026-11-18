@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { money, timeAgo } from '@/lib/format';
 import type { OpsOrder, OpsOrders, OrderStatus } from '@/lib/types';
 import { Badge, Card, ErrorNote, field, PageHead, Tile } from './ui';
+import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 
 const LOOK: Record<OrderStatus, { fg: string; bg: string }> = {
@@ -90,6 +91,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   const q = query.trim().toLowerCase();
   const searched = useMemo(() => data.orders.filter((o) => matches(o, q)), [data.orders, q]);
   const rows = useMemo(() => searched.filter((o) => tab === 'all' || o.status === tab), [searched, tab]);
+  const { shown, pager } = usePaged(rows, tab);
 
   const act = async (order: OpsOrder, action: Action) => {
     setBusy(order.id);
@@ -184,7 +186,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
         title={`GET /orders${[tab === 'all' ? '' : `status=${tab}`, clientName ? `client=${clientName}` : ''].filter(Boolean).map((p, i) => (i === 0 ? `?${p}` : `&${p}`)).join('')}`}
         right={<Badge>{rows.length}</Badge>}
       >
-        {rows.map((o) => {
+        {shown.map((o) => {
           const look = LOOK[o.status] ?? LOOK.pending;
           const placed = o.buy_cost !== null && o.buy_cost !== undefined;
           const profit = o.profit === null || o.profit === undefined ? null : Number(o.profit);
@@ -275,6 +277,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
             {data.orders.length === 0 ? 'no orders yet. they appear here the moment a client sends one.' : 'no orders match.'}
           </div>
         ) : null}
+        {pager}
       </Card>
     </>
   );
