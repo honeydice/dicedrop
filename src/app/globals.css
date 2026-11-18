@@ -2,17 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens. Dark is the default; light is switched on from Admin > Settings. */
+:root {
+  --ink: 13 17 23;
+  --panel: 17 22 29;
+  --raised: 22 27 34;
+  --line: 35 42 52;
+  --edge: 45 53 65;
+  --divider: 28 35 45;
+  --chip: 28 35 45;
+  --muted: 169 180 194;
+  --soft: 201 209 217;
+  --fg: 230 237 243;
+  --strong: 255 255 255;
+  --accent: 245 197 66;
+  --onaccent: 20 20 19;
+  --good: 110 231 168;
+  --bad: 255 154 154;
+  --warn: 229 208 138;
+  --dangerline: 90 38 38;
+  --dangerbg: 42 20 20;
+  --placeholder: 141 152 167;
+
+  --st-pending-fg: #c9d1d9;   --st-pending-bg: #2a313c;
+  --st-ordering-fg: #7cc4ff;  --st-ordering-bg: #10304a;
+  --st-ordered-fg: #c4b5fd;   --st-ordered-bg: #2b2550;
+  --st-shipped-fg: #ffb86b;   --st-shipped-bg: #40290f;
+  --st-delivered-fg: #6ee7a8; --st-delivered-bg: #0f3524;
+  --st-issue-fg: #ff9a9a;     --st-issue-bg: #461a1a;
+  --st-held-fg: #e5d08a;      --st-held-bg: #3a3212;
+  --st-cancelled-fg: #a9b4c2; --st-cancelled-bg: #1c232d;
+  --st-all-fg: #8d98a7;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --ink: 246 248 250;
+  --panel: 255 255 255;
+  --raised: 240 243 246;
+  --line: 216 222 228;
+  --edge: 200 207 215;
+  --divider: 234 238 242;
+  --chip: 234 238 242;
+  --muted: 87 96 106;
+  --soft: 66 74 83;
+  --fg: 31 35 40;
+  --strong: 0 0 0;
+  --accent: 154 103 0;
+  --onaccent: 255 255 255;
+  --good: 26 127 55;
+  --bad: 207 34 46;
+  --warn: 125 78 0;
+  --dangerline: 255 129 130;
+  --dangerbg: 255 235 233;
+  --placeholder: 110 119 129;
+
+  --st-pending-fg: #424a53;   --st-pending-bg: #eaeef2;
+  --st-ordering-fg: #0969da;  --st-ordering-bg: #ddf4ff;
+  --st-ordered-fg: #8250df;   --st-ordered-bg: #fbefff;
+  --st-shipped-fg: #bc4c00;   --st-shipped-bg: #fff1e5;
+  --st-delivered-fg: #1a7f37; --st-delivered-bg: #dafbe1;
+  --st-issue-fg: #cf222e;     --st-issue-bg: #ffebe9;
+  --st-held-fg: #7d4e00;      --st-held-bg: #fff8c5;
+  --st-cancelled-fg: #57606a; --st-cancelled-bg: #eaeef2;
+  --st-all-fg: #6e7781;
+  color-scheme: light;
+}
+
 html,
 body {
-  background: #0d1117;
-  color: #e6edf3;
+  background: rgb(var(--ink));
+  color: rgb(var(--fg));
 }
 
 input::placeholder {
-  color: #8d98a7;
+  color: rgb(var(--placeholder));
 }
 
 :focus-visible {
-  outline: 2px solid #f5c542;
+  outline: 2px solid rgb(var(--accent));
   outline-offset: 2px;
 }

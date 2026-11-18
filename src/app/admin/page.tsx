@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { revokeApiKey } from '@/app/admin/actions';
 import { AccountForm } from '@/components/admin/AccountForm';
 import { ApiKeyForm } from '@/components/admin/ApiKeyForm';
+import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import { Header } from '@/components/Header';
 import { SetupNotice } from '@/components/SetupNotice';
 import { getSessionContext } from '@/lib/context';
@@ -146,15 +147,24 @@ const { order } = await res.json();   // order.id, order.status
 
   return (
     <div className="min-h-screen">
-      <Header workspaceName={ctx.workspace.name} email={ctx.email} current="admin" />
+      <Header
+        workspaceName={ctx.workspace.name}
+        email={ctx.email}
+        current="admin"
+        isPlatformAdmin={ctx.isPlatformAdmin}
+      />
       <main className="mx-auto max-w-[1100px] space-y-5 px-5 pb-10 pt-6 sm:px-8">
         <h1 className="font-display text-[28px] font-semibold tracking-tight">Admin</h1>
 
         {loadError ? (
-          <div role="alert" className="rounded-lg border border-[#5A2626] bg-[#2A1414] px-4 py-3 text-[13px] text-bad">
+          <div role="alert" className="rounded-lg border border-dangerline bg-dangerbg px-4 py-3 text-[13px] text-bad">
             {loadError}
           </div>
         ) : null}
+
+        <Section title="Settings" hint="How DiceDrop looks on this device.">
+          <ThemeToggle />
+        </Section>
 
         <Section title="API keys" hint="One key per connected app. Paste the key into the app, add the snippet below, and it is live.">
           {isOwner ? <ApiKeyForm /> : <p className="text-muted">Only the workspace owner manages API keys.</p>}
@@ -172,11 +182,11 @@ const { order } = await res.json();   // order.id, order.status
                 </thead>
                 <tbody>
                   {keys.map((key) => (
-                    <tr key={key.id} className="border-b border-[#1C232D] last:border-b-0">
+                    <tr key={key.id} className="border-b border-divider last:border-b-0">
                       <td className={`${td} font-medium`}>{key.name}</td>
                       <td className={`${td} font-mono text-xs text-soft`}>{key.key_prefix}…</td>
                       <td className={`${td} text-muted`}>{day(key.last_used_at)}</td>
-                      <td className={td} style={{ color: key.revoked_at ? '#A9B4C2' : '#6EE7A8' }}>
+                      <td className={td} style={{ color: key.revoked_at ? 'rgb(var(--muted))' : 'rgb(var(--good))' }}>
                         {key.revoked_at ? 'Switched off' : 'Active'}
                       </td>
                       <td className={`${td} text-right`}>
@@ -185,7 +195,7 @@ const { order } = await res.json();   // order.id, order.status
                             <input type="hidden" name="id" value={key.id} />
                             <button
                               type="submit"
-                              className="min-h-[44px] rounded-lg border border-[#5A2626] bg-raised px-3.5 text-[13px] font-medium text-bad"
+                              className="min-h-[44px] rounded-lg border border-dangerline bg-raised px-3.5 text-[13px] font-medium text-bad"
                             >
                               Switch off
                             </button>
@@ -223,7 +233,7 @@ const { order } = await res.json();   // order.id, order.status
                 </thead>
                 <tbody>
                   {accounts.map((acct) => (
-                    <tr key={acct.id} className="border-b border-[#1C232D] last:border-b-0">
+                    <tr key={acct.id} className="border-b border-divider last:border-b-0">
                       <td className={`${td} font-medium`}>{acct.label}</td>
                       <td className={`${td} text-soft`}>{acct.login_email ?? '—'}</td>
                       <td className={`${td} capitalize text-soft`}>{acct.status}</td>
@@ -254,7 +264,7 @@ const { order } = await res.json();   // order.id, order.status
                 </thead>
                 <tbody>
                   {boxes.map((box) => (
-                    <tr key={box.id} className="border-b border-[#1C232D] last:border-b-0">
+                    <tr key={box.id} className="border-b border-divider last:border-b-0">
                       <td className={`${td} font-medium`}>{box.name}</td>
                       <td className={`${td} capitalize text-soft`}>{box.status}</td>
                       <td className={`${td} font-mono text-xs text-soft`}>{box.worker_version ?? '—'}</td>
@@ -281,7 +291,7 @@ const { order } = await res.json();   // order.id, order.status
               </thead>
               <tbody>
                 {selectors.map((sel) => (
-                  <tr key={sel.key} className="border-b border-[#1C232D] last:border-b-0">
+                  <tr key={sel.key} className="border-b border-divider last:border-b-0">
                     <td className={`${td} font-mono text-xs`}>{sel.key}</td>
                     <td className={`${td} font-mono text-xs text-accent`}>{sel.value}</td>
                     <td className={`${td} text-soft`}>{sel.description ?? ''}</td>

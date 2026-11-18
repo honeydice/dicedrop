@@ -50,7 +50,7 @@ export function LoginForm() {
     }
   };
 
-  const field = 'mt-1.5 h-11 w-full rounded-[10px] border border-edge bg-raised px-3.5 text-sm text-[#E6EDF3]';
+  const field = 'mt-1.5 h-11 w-full rounded-[10px] border border-edge bg-raised px-3.5 text-sm text-fg';
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6 py-12">
@@ -98,7 +98,7 @@ export function LoginForm() {
         <button
           type="submit"
           disabled={busy}
-          className="h-11 w-full rounded-[10px] bg-accent text-sm font-semibold text-[#141413] disabled:opacity-60"
+          className="h-11 w-full rounded-[10px] bg-accent text-sm font-semibold text-onaccent disabled:opacity-60"
         >
           {busy ? 'One moment' : mode === 'in' ? 'Sign in' : 'Create account'}
         </button>
@@ -110,7 +110,7 @@ export function LoginForm() {
           setMode(mode === 'in' ? 'up' : 'in');
           setMessage('');
         }}
-        className="mt-4 min-h-[44px] bg-transparent text-[13px] text-muted hover:text-white"
+        className="mt-4 min-h-[44px] bg-transparent text-[13px] text-muted hover:text-strong"
       >
         {mode === 'in' ? 'New here? Create an account' : 'Already have an account? Sign in'}
       </button>

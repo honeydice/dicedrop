@@ -5,7 +5,7 @@ import { useFormState, useFormStatus } from 'react-dom';
 import { addBuyerAccount, type AccountResult } from '@/app/admin/actions';
 
 const START: AccountResult = { ok: false, error: '' };
-const field = 'mt-1.5 h-11 w-full rounded-[10px] border border-edge bg-raised px-3.5 text-sm text-[#E6EDF3]';
+const field = 'mt-1.5 h-11 w-full rounded-[10px] border border-edge bg-raised px-3.5 text-sm text-fg';
 
 function Submit() {
   const { pending } = useFormStatus();
@@ -13,7 +13,7 @@ function Submit() {
     <button
       type="submit"
       disabled={pending}
-      className="h-11 rounded-[10px] bg-accent px-5 text-sm font-semibold text-[#141413] disabled:opacity-60"
+      className="h-11 rounded-[10px] bg-accent px-5 text-sm font-semibold text-onaccent disabled:opacity-60"
     >
       {pending ? 'Adding' : 'Add account'}
     </button>
@@ -70,7 +70,7 @@ export function AccountForm() {
         <Submit />
       </form>
       {state.error ? (
-        <div role="alert" className="mt-3 rounded-lg border border-[#5A2626] bg-[#2A1414] px-3.5 py-2.5 text-[13px] text-bad">
+        <div role="alert" className="mt-3 rounded-lg border border-dangerline bg-dangerbg px-3.5 py-2.5 text-[13px] text-bad">
           {state.error}
         </div>
       ) : null}

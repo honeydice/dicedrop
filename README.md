@@ -1,4 +1,4 @@
-# DiceDrop v0.1.1
+# DiceDrop v0.1.2
 
 The DiceDrop Control Tower: a live order board, an admin back room, and the API that connected apps use to send orders.
 
@@ -9,6 +9,7 @@ This release is the dash and database. The Worker (which places orders on Amazon
 - **Order board** (`/`): live status tabs (Pending, Ordering, Ordered, Shipped, Delivered, Issues), search, the spend strip (Spent today, Pending estimate, Projected today), and backup controls (Retry, Hold, Cancel) on each row.
 - **Admin** (`/admin`): API keys, the connect snippet, buyer accounts, boxes, and selectors.
 - **API** (`/api/v1`): send, look up, cancel, hold, and retry orders with one API key.
+- **Platform** (`/platform`): the owner view across every workspace and user, with pause and resume per workspace. Only platform owners (rows in `platform_admins`) see it.
 - **Workspaces**: every order, account, and key belongs to a workspace, and each workspace only sees its own data.
 
 ## Setup (about 10 minutes)

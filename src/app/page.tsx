@@ -42,7 +42,12 @@ export default async function OrdersPage() {
 
   return (
     <div className="min-h-screen">
-      <Header workspaceName={ctx.workspace.name} email={ctx.email} current="orders" />
+      <Header
+        workspaceName={ctx.workspace.name}
+        email={ctx.email}
+        current="orders"
+        isPlatformAdmin={ctx.isPlatformAdmin}
+      />
       <Board
         workspaceId={ctx.workspace.id}
         initial={initial}

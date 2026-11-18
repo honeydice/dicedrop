@@ -1,4 +1,4 @@
--- DiceDrop v0.1.1 schema
+-- DiceDrop v0.1.2 schema
 -- Run this once in the SQL editor of a NEW Supabase project (separate from DiceOps).
 
 create extension if not exists pgcrypto;
@@ -632,3 +632,123 @@ revoke all on function public.dd_is_owner(uuid) from public, anon;
 grant execute on function public.dd_is_member(uuid) to authenticated;
 grant execute on function public.dd_can_write(uuid) to authenticated;
 grant execute on function public.dd_is_owner(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Platform console (v0.1.2)
+-- Platform owners run DiceDrop itself and can see every workspace.
+-- Add an owner:  insert into public.platform_admins (user_id, email)
+--                select id, email from auth.users where email = 'you@example.com';
+-- ---------------------------------------------------------------------------
+create table if not exists public.platform_admins (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  created_at timestamptz not null default now()
+);
+alter table public.platform_admins enable row level security;
+
+alter table public.workspaces
+  add column if not exists status text not null default 'active'
+  check (status in ('active', 'paused'));
+
+create or replace function public.dd_is_platform_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.platform_admins where user_id = auth.uid());
+$$;
+
+create or replace function public.dd_platform_overview()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.dd_is_platform_admin() then
+    raise exception 'platform owners only';
+  end if;
+
+  return jsonb_build_object(
+    'totals', jsonb_build_object(
+      'workspaces', (select count(*) from public.workspaces),
+      'users', (select count(*) from auth.users),
+      'orders_total', (select count(*) from public.orders),
+      'orders_24h', (select count(*) from public.orders where created_at > now() - interval '24 hours'),
+      'spent_24h', coalesce((select sum(buy_cost) from public.orders where placed_at > now() - interval '24 hours'), 0),
+      'open_issues', (select count(*) from public.orders where status = 'issue'),
+      'buyer_accounts', (select count(*) from public.buyer_accounts),
+      'boxes_online', (select count(*) from public.boxes where status = 'online' and last_heartbeat > now() - interval '5 minutes'),
+      'boxes_total', (select count(*) from public.boxes)
+    ),
+    'workspaces', coalesce((
+      select jsonb_agg(to_jsonb(x) order by x.created_at)
+      from (
+        select w.id, w.name, w.status, w.timezone, w.created_at,
+          (select m.email from public.workspace_members m where m.workspace_id = w.id and m.role = 'owner' order by m.created_at limit 1) as owner_email,
+          (select count(*) from public.workspace_members m where m.workspace_id = w.id) as members,
+          (select count(*) from public.orders o where o.workspace_id = w.id) as orders_total,
+          (select count(*) from public.orders o where o.workspace_id = w.id and o.created_at > now() - interval '24 hours') as orders_24h,
+          coalesce((select sum(o.buy_cost) from public.orders o where o.workspace_id = w.id and o.placed_at > now() - interval '24 hours'), 0) as spent_24h,
+          (select count(*) from public.orders o where o.workspace_id = w.id and o.status in ('pending', 'ordering')) as pending,
+          (select count(*) from public.orders o where o.workspace_id = w.id and o.status = 'issue') as issues,
+          (select count(*) from public.api_keys k where k.workspace_id = w.id and k.revoked_at is null) as active_keys,
+          (select max(k.last_used_at) from public.api_keys k where k.workspace_id = w.id) as last_api_use,
+          (select count(*) from public.buyer_accounts a where a.workspace_id = w.id) as buyer_accounts,
+          (select count(*) from public.boxes b where b.workspace_id = w.id) as boxes
+        from public.workspaces w
+      ) x
+    ), '[]'::jsonb),
+    'users', coalesce((
+      select jsonb_agg(to_jsonb(y) order by y.created_at)
+      from (
+        select u.id, u.email, u.created_at, u.last_sign_in_at,
+          (u.email_confirmed_at is not null) as confirmed,
+          exists (select 1 from public.platform_admins p where p.user_id = u.id) as platform_owner,
+          coalesce((
+            select string_agg(w.name || ' (' || m.role || ')', ', ' order by w.name)
+            from public.workspace_members m join public.workspaces w on w.id = m.workspace_id
+            where m.user_id = u.id
+          ), '') as workspaces
+        from auth.users u
+      ) y
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.dd_platform_set_workspace_status(p_workspace uuid, p_status text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.dd_is_platform_admin() then
+    raise exception 'platform owners only';
+  end if;
+  if p_status not in ('active', 'paused') then
+    raise exception 'status must be active or paused';
+  end if;
+  update public.workspaces set status = p_status where id = p_workspace;
+end;
+$$;
+
+-- API keys from a paused workspace are turned away.
+create or replace function public.dd_api_auth(p_key text)
+returns public.api_keys language plpgsql security definer set search_path = public as $$
+declare
+  k public.api_keys%rowtype;
+begin
+  if p_key is null or length(p_key) < 20 then
+    raise exception 'That API key is not active.' using errcode = 'DD401';
+  end if;
+  select * into k from public.api_keys
+    where key_hash = encode(sha256(convert_to(p_key, 'UTF8')), 'hex') and revoked_at is null;
+  if not found then
+    raise exception 'That API key is not active.' using errcode = 'DD401';
+  end if;
+  if exists (select 1 from public.workspaces w where w.id = k.workspace_id and w.status = 'paused') then
+    raise exception 'This workspace is paused.' using errcode = 'DD403';
+  end if;
+  update public.api_keys set last_used_at = now() where id = k.id;
+  return k;
+end;
+$$;
+
+revoke all on function public.dd_api_auth(text) from public, anon, authenticated;
+revoke all on function public.dd_is_platform_admin() from public, anon;
+revoke all on function public.dd_platform_overview() from public, anon;
+revoke all on function public.dd_platform_set_workspace_status(uuid, text) from public, anon;
+grant execute on function public.dd_is_platform_admin() to authenticated;
+grant execute on function public.dd_platform_overview() to authenticated;
+grant execute on function public.dd_platform_set_workspace_status(uuid, text) to authenticated;

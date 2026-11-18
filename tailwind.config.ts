@@ -1,20 +1,30 @@
 import type { Config } from 'tailwindcss';
 
+const token = (name: string) => `rgb(var(--${name}) / <alpha-value>)`;
+
 const config: Config = {
   content: ['./src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        ink: '#0D1117',
-        panel: '#11161D',
-        raised: '#161B22',
-        line: '#232A34',
-        edge: '#2D3541',
-        muted: '#A9B4C2',
-        soft: '#C9D1D9',
-        accent: '#F5C542',
-        good: '#6EE7A8',
-        bad: '#FF9A9A',
+        ink: token('ink'),
+        panel: token('panel'),
+        raised: token('raised'),
+        line: token('line'),
+        edge: token('edge'),
+        divider: token('divider'),
+        chip: token('chip'),
+        muted: token('muted'),
+        soft: token('soft'),
+        fg: token('fg'),
+        strong: token('strong'),
+        accent: token('accent'),
+        onaccent: token('onaccent'),
+        good: token('good'),
+        bad: token('bad'),
+        warn: token('warn'),
+        dangerline: token('dangerline'),
+        dangerbg: token('dangerbg'),
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

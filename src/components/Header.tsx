@@ -6,14 +6,16 @@ export function Header({
   workspaceName,
   email,
   current,
+  isPlatformAdmin = false,
 }: {
   workspaceName: string;
   email: string;
-  current: 'orders' | 'admin';
+  current: 'orders' | 'admin' | 'platform';
+  isPlatformAdmin?: boolean;
 }) {
   const linkBase = 'inline-flex min-h-[44px] items-center rounded-lg border px-3.5 text-[13px] no-underline';
-  const on = 'border-edge bg-raised text-white';
-  const off = 'border-line text-muted hover:text-white';
+  const on = 'border-edge bg-raised text-strong';
+  const off = 'border-line text-muted hover:text-strong';
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4 sm:px-8">
@@ -29,6 +31,14 @@ export function Header({
         <Link href="/admin" className={`${linkBase} ${current === 'admin' ? on : off}`}>
           Admin
         </Link>
+        {isPlatformAdmin ? (
+          <Link
+            href="/platform"
+            className={`${linkBase} ${current === 'platform' ? 'border-accent bg-raised text-accent' : 'border-accent/50 text-accent hover:border-accent'}`}
+          >
+            Platform
+          </Link>
+        ) : null}
         <form action={signOut}>
           <button type="submit" className={`${linkBase} ${off} bg-transparent`} title={email}>
             Sign out

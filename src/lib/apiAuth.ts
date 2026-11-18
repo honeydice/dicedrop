@@ -38,6 +38,8 @@ export function fromDbError(error: { code?: string; message?: string }) {
   switch (error.code) {
     case 'DD401':
       return apiError(401, 'invalid_key', message);
+    case 'DD403':
+      return apiError(403, 'workspace_paused', message);
     case 'DD404':
       return apiError(404, 'not_found', message);
     case 'DD422':
