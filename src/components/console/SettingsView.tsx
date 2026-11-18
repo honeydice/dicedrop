@@ -1,13 +1,34 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { addCard, clearTotp, importProxies, removeCard, removeProxies, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
 import { usePaged } from './Pager';
-import { btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
+import { btn, btnAccent, btnDanger, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
+
+/** A settings group that stays folded to one line until it is clicked. */
+function Section({ title, summary, open, onToggle, children }: { title: string; summary?: string; open: boolean; onToggle: (title: string) => void; children: ReactNode }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-line bg-panel">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => onToggle(title)}
+        className="flex min-h-[52px] w-full items-center gap-4 bg-raised px-5 py-3 text-left"
+      >
+        <span className="font-mono text-[14px] text-fg">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-right font-mono text-[13px] text-muted">{summary}</span>
+        <span aria-hidden="true" className="font-mono text-[13px] text-muted">
+          {open ? '−' : '+'}
+        </span>
+      </button>
+      {open ? <div className="border-t border-line">{children}</div> : null}
+    </section>
+  );
+}
 
 const ZONES = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu', 'UTC'];
 
@@ -65,6 +86,14 @@ export function SettingsView({
   const [proxyNotice, setProxyNotice] = useState('');
   const { shown: shownProxies, pager: proxyPager } = usePaged(proxies);
   const proxiesFree = proxies.filter((p) => !p.account_id).length;
+  const [openSet, setOpenSet] = useState<Set<string>>(new Set());
+  const toggle = (title: string) =>
+    setOpenSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
   const generating = twoStep.filter((x) => x.totp_enabled).length;
 
   const save = async (work: () => Promise<{ ok: boolean; error: string }>) => {
@@ -83,19 +112,30 @@ export function SettingsView({
     }
   };
 
+  const summary: Record<string, string> = {
+    appearance: 'light or dark',
+    'contabo connection': connected ? `connected · ${contabo?.instance_count ?? 0} servers` : 'not connected',
+    proxies: `${proxies.length} proxies · ${proxiesFree} free`,
+    cards: `${cards.length} card${cards.length === 1 ? '' : 's'}`,
+    'two-step codes': `${generating} of ${twoStep.length} generating`,
+    'day boundary': timezone,
+    selectors: `${selectors.length} selectors`,
+    operators: `${operators.length} operator${operators.length === 1 ? '' : 's'}`,
+  };
+
   return (
     <>
       <PageHead title="Settings" />
       <ErrorNote message={error} />
 
-      <div className="space-y-5">
-        <Card title="appearance">
+      <div className="space-y-2.5">
+        <Section title="appearance" summary={summary['appearance']} open={openSet.has('appearance')} onToggle={toggle}>
           <div className="px-5 py-4">
             <ThemeToggle />
           </div>
-        </Card>
+        </Section>
 
-        <Card title="contabo connection">
+        <Section title="contabo connection" summary={summary['contabo connection']} open={openSet.has('contabo connection')} onToggle={toggle}>
           <div className="px-5 py-4">
             <div className="flex items-start gap-3.5">
               <span className="mt-[7px]">
@@ -191,9 +231,9 @@ export function SettingsView({
               </form>
             )}
           </div>
-        </Card>
+        </Section>
 
-        <Card title="proxies">
+        <Section title="proxies" summary={summary['proxies']} open={openSet.has('proxies')} onToggle={toggle}>
           <div className="px-5 pt-4">
             <p className="text-[13px] text-muted">
               The proxy library. Each Amazon account gets one dedicated proxy and keeps it. Upload the file from your provider, one proxy per line as{' '}
@@ -291,9 +331,9 @@ export function SettingsView({
             </div>
           ))}
           {proxyPager}
-        </Card>
+        </Section>
 
-        <Card title="cards">
+        <Section title="cards" summary={summary['cards']} open={openSet.has('cards')} onToggle={toggle}>
           <div className="px-5 pt-4">
             <p className="text-[13px] text-muted">
               The card library. Add each card once as bank and last 4, then pick it on any account. The card itself lives in the Amazon account, so no card
@@ -355,9 +395,9 @@ export function SettingsView({
               </button>
             </form>
           </div>
-        </Card>
+        </Section>
 
-        <Card title="two-step codes">
+        <Section title="two-step codes" summary={summary['two-step codes']} open={openSet.has('two-step codes')} onToggle={toggle}>
           <div className="px-5 pt-4">
             <p className="text-[13px] text-muted">
               DiceDrop acts as the authenticator app for your Amazon accounts. In Amazon&apos;s two-step setup choose &quot;authenticator app&quot;, click
@@ -443,9 +483,9 @@ export function SettingsView({
               ))
             )}
           </div>
-        </Card>
+        </Section>
 
-        <Card title="day boundary">
+        <Section title="day boundary" summary={summary['day boundary']} open={openSet.has('day boundary')} onToggle={toggle}>
           <div className="flex flex-wrap items-end gap-3 px-5 py-4">
             <div className="basis-64">
               <label htmlFor="tz" className={label}>
@@ -463,9 +503,9 @@ export function SettingsView({
               Save
             </button>
           </div>
-        </Card>
+        </Section>
 
-        <Card title="selectors">
+        <Section title="selectors" summary={summary['selectors']} open={openSet.has('selectors')} onToggle={toggle}>
           <p className="px-5 pt-4 text-[13px] text-muted">
             Where Amazon&apos;s buttons and fields live. Every box picks up a change on its next check-in, so a page change on Amazon is a one-row edit here.
           </p>
@@ -505,9 +545,9 @@ export function SettingsView({
               );
             })}
           </div>
-        </Card>
+        </Section>
 
-        <Card title="operators">
+        <Section title="operators" summary={summary['operators']} open={openSet.has('operators')} onToggle={toggle}>
           <div className="px-5 py-4">
             <p className="text-[13px] text-muted">The people who can sign in to this console. Nobody else has access.</p>
             <ul className="mt-3 space-y-1 font-mono text-[13px]">
@@ -516,7 +556,7 @@ export function SettingsView({
               ))}
             </ul>
           </div>
-        </Card>
+        </Section>
       </div>
     </>
   );
