@@ -36,7 +36,10 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
       <aside className="flex shrink-0 flex-col gap-5 border-b border-line bg-panel px-4 py-5 md:w-[232px] md:border-b-0 md:border-r">
         <div className="flex items-center gap-3 px-1.5">
           <Logo size={48} />
-          <div className="font-mono text-[12px] text-muted">operator console</div>
+          <div>
+            <div className="font-display text-[20px] font-bold leading-tight tracking-tight text-strong">DiceDrop</div>
+            <div className="font-mono text-[12px] text-muted">operator console</div>
+          </div>
         </div>
         <SideNav />
         <div className="mt-auto space-y-2 px-1.5">
