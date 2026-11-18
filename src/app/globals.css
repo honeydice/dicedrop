@@ -83,3 +83,14 @@ input::placeholder {
   outline: 2px solid rgb(var(--accent));
   outline-offset: 2px;
 }
+
+/* Default density: the whole app renders at 80% on tablets and desktops.
+   Phones keep full size so text and buttons stay comfortable. */
+@media (min-width: 768px) {
+  body {
+    zoom: 0.8;
+  }
+  .min-h-screen {
+    min-height: calc(100vh / 0.8);
+  }
+}

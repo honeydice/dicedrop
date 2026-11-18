@@ -1,4 +1,4 @@
-# DiceDrop v0.1.3
+# DiceDrop v0.1.4
 
 The DiceDrop Control Tower: a live order board, an admin back room, and the API that connected apps use to send orders.
 
