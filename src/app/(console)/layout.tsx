@@ -38,7 +38,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         <div className="flex items-center gap-3 px-1.5">
           <Logo size={48} />
           <div>
-            <div className="font-display text-[20px] font-bold leading-tight tracking-tight text-strong">DiceDrop</div>
+            <div className="font-digital text-[30px] leading-none tracking-wide text-strong">DiceDrop</div>
             <div className="font-mono text-[12px] text-muted">operator console</div>
           </div>
         </div>

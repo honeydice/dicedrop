@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listProxies, saveAccount, type AccountForm } from '@/app/(console)/actions';
 import type { OpsAccount, OpsAccounts, OpsProxy } from '@/lib/types';
-import { btn, btnAccent, ErrorNote, field, label } from './ui';
+import { btn, btnAccent, Dot, ErrorNote, field, label, TONE } from './ui';
 
 type Tab = 'details' | 'payment' | 'assignment' | 'settings';
 const TABS: { id: Tab; name: string }[] = [
@@ -105,6 +105,9 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
       setBusy(false);
     }
   };
+
+  // Only proxies nobody else is using, plus this account's own.
+  const available = (proxies ?? []).filter((p) => !p.account_id || p.account_id === account?.id);
 
   const toggleClient = (id: string) =>
     set({ allowed_clients: form.allowed_clients.includes(id) ? form.allowed_clients.filter((x) => x !== id) : [...form.allowed_clients, id] });
@@ -270,23 +273,34 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label htmlFor="am-proxy" className={label}>
-                    Dedicated proxy
-                  </label>
-                  <select id="am-proxy" disabled={proxies === null} value={form.proxy_id} onChange={(e) => set({ proxy_id: e.target.value })} className={field}>
-                    <option value="">{proxies === null ? 'Loading proxies' : 'No proxy'}</option>
-                    {(proxies ?? [])
-                      .filter((p) => !p.account_id || p.account_id === account?.id)
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label} · {p.host}:{p.port}
-                        </option>
-                      ))}
-                  </select>
-                  <p className="mt-1.5 text-[13px] text-muted">
-                    {proxies && proxies.length === 0 ? 'Import proxies in Settings first.' : `${(proxies ?? []).filter((p) => !p.account_id).length} free in the library. One proxy per account.`}
-                  </p>
+                <div className="sm:col-span-2">
+                  <div className="mb-1.5 flex items-baseline justify-between">
+                    <span id="am-proxy-label" className="text-[13px] font-medium text-soft">
+                      Dedicated proxy
+                    </span>
+                    <span className="font-mono text-xs text-muted">{proxies === null ? 'loading' : `${available.filter((p) => !p.account_id).length} available`}</span>
+                  </div>
+                  <div role="radiogroup" aria-labelledby="am-proxy-label" className="max-h-[232px] overflow-y-auto rounded-[10px] border border-edge">
+                    {[{ id: '', label: 'none', host: '', port: 0 }, ...available].map((p) => {
+                      const picked = form.proxy_id === p.id;
+                      return (
+                        <button
+                          key={p.id || 'none'}
+                          type="button"
+                          role="radio"
+                          aria-checked={picked}
+                          onClick={() => set({ proxy_id: p.id })}
+                          className="flex min-h-[44px] w-full items-center gap-3.5 border-b border-divider px-3.5 text-left last:border-b-0 hover:bg-raised/60"
+                          style={picked ? { background: 'rgb(var(--raised))' } : undefined}
+                        >
+                          <Dot color={picked ? TONE.good : 'rgb(var(--chip))'} />
+                          <span className="font-mono text-[14px] text-fg">{p.label}</span>
+                          <span className="font-mono text-[13px] text-muted">{p.host ? `${p.host}:${p.port}` : 'no proxy on this account'}</span>
+                          {picked ? <span className="ml-auto font-mono text-xs text-good">selected</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <fieldset className="sm:col-span-2">
                   <legend className={label}>Access</legend>

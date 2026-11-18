@@ -30,6 +30,7 @@ const config: Config = {
         sans: ['Inter', 'system-ui', 'sans-serif'],
         display: ['"Space Grotesk"', 'Inter', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        digital: ['VT323', '"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
     },
   },
