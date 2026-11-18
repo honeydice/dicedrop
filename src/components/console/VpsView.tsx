@@ -43,6 +43,7 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
   const [token, setToken] = useState<{ box: string; value: string } | null>(null);
+  const [open, setOpen] = useState('');
 
   const run = async (work: () => Promise<Result>): Promise<Result | null> => {
     setBusy(true);
@@ -158,9 +159,43 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
         </Card>
       ) : null}
 
-      <div className="space-y-5">
-        {data.boxes.map((b) => (
-          <Card key={b.id} title={`vps/${b.name}`} right={<Badge>{b.placed_today} today</Badge>}>
+      {data.boxes.length > 0 ? (
+      <Card title="GET /vps" right={<Badge>{data.boxes.length}</Badge>}>
+        {data.boxes.map((b) => {
+          const isOpen = open === b.id;
+          const attention = b.accounts.filter((x) => x.status === 'locked' || x.session_state === 'needs_sign_in' || x.session_state === 'verification' || x.session_state === 'locked').length;
+          const problem = Boolean(b.last_error || b.server_error) || attention > 0 || b.working.some((w) => w.stuck);
+          return (
+          <div key={b.id} className="border-b border-divider last:border-b-0">
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              onClick={() => setOpen(isOpen ? '' : b.id)}
+              className="flex w-full flex-wrap items-center gap-x-3.5 gap-y-1 bg-transparent px-5 py-2.5 text-left hover:bg-raised/60"
+            >
+              <Dot color={connTone(b)} />
+              <span className="font-mono text-[14px] text-fg">{b.name}</span>
+              <span className="font-mono text-[13px] text-muted">{connText(b)}</span>
+              {b.provider_instance_id ? (
+                <span className="font-mono text-[13px]" style={{ color: serverTone(b.server_status) }}>
+                  server.{b.server_status ?? 'unknown'}
+                </span>
+              ) : null}
+              {problem ? <span className="font-mono text-[13px] text-bad">needs attention</span> : null}
+              <span className="ml-auto font-mono text-xs text-muted">
+                {[
+                  b.working.length > 0 ? `placing ${b.working.length}` : 'idle',
+                  `${b.accounts.length} acct${b.accounts.length === 1 ? '' : 's'}`,
+                  `${b.placed_today} today`,
+                  b.last_heartbeat && now ? `hb ${timeAgo(b.last_heartbeat, now)}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </button>
+
+            {isOpen ? (
+            <div className="border-t border-divider bg-raised/40">
             <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
               <div className="flex items-start gap-3.5">
                 <span className="mt-[7px]">
@@ -312,9 +347,13 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
                 </div>
               )}
             </div>
-          </Card>
-        ))}
-      </div>
+            </div>
+            ) : null}
+          </div>
+          );
+        })}
+      </Card>
+      ) : null}
     </>
   );
 }
