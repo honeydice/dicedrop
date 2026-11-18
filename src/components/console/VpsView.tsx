@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { createBox, deleteBox, rotateBoxToken, serverPower, setBoxState, syncContabo, type Result } from '@/app/(console)/actions';
+import { deleteBox, rotateBoxToken, serverPower, setBoxState, syncContabo, type Result } from '@/app/(console)/actions';
 import { timeAgo } from '@/lib/format';
 import type { BoxState, OpsBox, OpsBoxes } from '@/lib/types';
-import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
+import { Badge, btn, btnDanger, Card, Dot, ErrorNote, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
 import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 
@@ -43,7 +43,6 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
   const { shown: shownBoxes, pager } = usePaged(data.boxes);
   const now = useNow();
   const [busy, setBusy] = useState(false);
-  const [name, setName] = useState('');
   const [token, setToken] = useState<{ box: string; value: string } | null>(null);
   const [open, setOpen] = useState('');
 
@@ -75,7 +74,7 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
 
   return (
     <>
-      <PageHead title="VPS" hint="Every worker box: connection, what it is doing, and its controls. Refreshed every 5 seconds.">
+      <PageHead title="VPS">
         {data.contabo?.connected ? (
           <div className="flex flex-wrap items-center gap-3">
             <span className="font-mono text-xs text-muted">
@@ -118,28 +117,6 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
         </Card>
       </div>
 
-      <form
-        className="mb-5 flex flex-wrap items-end gap-3"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const result = await run(() => createBox(name));
-          if (result?.ok && result.secret) {
-            setToken({ box: name.trim(), value: result.secret });
-            setName('');
-          }
-        }}
-      >
-        <div className="flex-1 basis-64">
-          <label htmlFor="box-name" className={label}>
-            Add a VPS
-          </label>
-          <input id="box-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="box-01" className={field} />
-        </div>
-        <button type="submit" disabled={busy || !name.trim()} className={btnAccent}>
-          Add VPS
-        </button>
-      </form>
-
       {token ? (
         <div role="status" className="mb-5 rounded-2xl border border-accent/50 bg-raised p-5">
           <div className="font-medium">Token for {token.box}. Copy it now; it is shown only once.</div>
@@ -156,7 +133,7 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
       {data.boxes.length === 0 ? (
         <Card>
           <div className="px-5 py-12 text-center font-mono text-[13px] text-muted">
-            no boxes yet. add one above, or connect contabo under settings to import your servers.
+            no boxes yet. connect contabo under settings to import your servers.
           </div>
         </Card>
       ) : null}
