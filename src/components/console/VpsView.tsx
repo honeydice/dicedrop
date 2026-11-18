@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { createBox, deleteBox, rotateBoxToken, setBoxState, type Result } from '@/app/(console)/actions';
+import { createBox, deleteBox, rotateBoxToken, serverPower, setBoxState, syncContabo, type Result } from '@/app/(console)/actions';
 import { timeAgo } from '@/lib/format';
 import type { BoxState, OpsBox, OpsBoxes } from '@/lib/types';
 import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
@@ -19,6 +19,22 @@ function connText(b: OpsBox): string {
   if (b.desired_state === 'pause') return 'box.paused';
   if (b.desired_state === 'drain') return 'box.draining';
   return 'box.online';
+}
+
+function serverTone(status: string | null): string {
+  if (status === 'running') return TONE.good;
+  if (status === 'stopped' || status === 'error' || status === 'gone') return TONE.bad;
+  if (!status) return TONE.muted;
+  return TONE.warn;
+}
+
+function specs(b: OpsBox): string {
+  const parts = [
+    b.server_cpu ? `${b.server_cpu} cores` : null,
+    b.server_ram_mb ? `${Math.round(b.server_ram_mb / 1024)} GB RAM` : null,
+    b.server_disk_mb ? `${Math.round(b.server_disk_mb / 1024)} GB disk` : null,
+  ].filter(Boolean);
+  return parts.join(' / ');
 }
 
 export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialError: string }) {
@@ -56,7 +72,19 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
 
   return (
     <>
-      <PageHead title="VPS" hint="Every worker box: connection, what it is doing, and its controls. Refreshed every 5 seconds." />
+      <PageHead title="VPS" hint="Every worker box: connection, what it is doing, and its controls. Refreshed every 5 seconds.">
+        {data.contabo?.connected ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-mono text-xs text-muted">
+              contabo synced {data.contabo.last_sync_at && now ? timeAgo(data.contabo.last_sync_at, now) : 'never'}
+            </span>
+            <button type="button" disabled={busy} className={btn} onClick={() => void run(() => syncContabo())}>
+              Sync servers
+            </button>
+          </div>
+        ) : null}
+      </PageHead>
+      {data.contabo?.connected && data.contabo.last_sync_error ? <ErrorNote message={`Contabo sync: ${data.contabo.last_sync_error}`} /> : null}
       <ErrorNote message={error} />
 
       <section aria-label="Fleet" className="mb-5 flex flex-wrap gap-3">
@@ -124,7 +152,9 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
 
       {data.boxes.length === 0 ? (
         <Card>
-          <div className="px-5 py-12 text-center font-mono text-[13px] text-muted">no boxes yet. add your first VPS above.</div>
+          <div className="px-5 py-12 text-center font-mono text-[13px] text-muted">
+            no boxes yet. add one above, or connect contabo under settings to import your servers.
+          </div>
         </Card>
       ) : null}
 
@@ -166,19 +196,22 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
                   disabled={busy}
                   className={btn}
                   onClick={async () => {
-                    if (!window.confirm(`Create a new token for ${b.name}? The old token stops working right away.`)) return;
+                    if (b.has_token && !window.confirm(`Create a new token for ${b.name}? The old token stops working right away.`)) return;
                     const result = await run(() => rotateBoxToken(b.id));
                     if (result?.ok && result.secret) setToken({ box: b.name, value: result.secret });
                   }}
                 >
-                  New token
+                  {b.has_token ? 'New token' : 'Create token'}
                 </button>
                 <button
                   type="button"
                   disabled={busy}
                   className={btnDanger}
                   onClick={() => {
-                    if (!window.confirm(`Remove ${b.name}? Its accounts become unassigned. This cannot be undone.`)) return;
+                    const note = b.provider_instance_id
+                      ? 'The Contabo server itself keeps running; it is just left out of DiceDrop. You can bring it back from Settings.'
+                      : 'This cannot be undone.';
+                    if (!window.confirm(`Remove ${b.name}? Its accounts become unassigned. ${note}`)) return;
                     void run(() => deleteBox(b.id));
                   }}
                 >
@@ -186,6 +219,56 @@ export function VpsView({ initial, initialError }: { initial: OpsBoxes; initialE
                 </button>
               </div>
             </div>
+
+            {b.provider_instance_id ? (
+              <div className="flex flex-wrap items-center justify-between gap-4 border-t border-divider px-5 py-3">
+                <div className="flex items-start gap-3.5">
+                  <span className="mt-[7px]">
+                    <Dot color={serverTone(b.server_status)} />
+                  </span>
+                  <div>
+                    <div className="font-mono text-[15px]">server.{b.server_status ?? 'unknown'}</div>
+                    <div className="mt-0.5 font-mono text-xs text-muted">
+                      {[b.provider, b.server_ip, b.server_region, specs(b), b.server_product].filter(Boolean).join(' · ')}
+                    </div>
+                    {b.server_error ? <div className="mt-1 text-[13px] text-bad">{b.server_error}</div> : null}
+                    {b.last_action ? (
+                      <div className="mt-0.5 font-mono text-xs text-muted">
+                        last: {b.last_action.type} by {b.last_action.actor.replace('user:', '')}
+                        {now ? ` · ${timeAgo(b.last_action.created_at, now)}` : ''}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" disabled={busy || b.server_status === 'running'} className={btn} onClick={() => void run(() => serverPower(b.id, 'start'))}>
+                    Start
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className={btn}
+                    onClick={() => {
+                      if (!window.confirm(`Restart the server ${b.name}? Any order it is placing right now will be interrupted.`)) return;
+                      void run(() => serverPower(b.id, 'restart'));
+                    }}
+                  >
+                    Restart
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || b.server_status === 'stopped'}
+                    className={btnDanger}
+                    onClick={() => {
+                      if (!window.confirm(`Shut down the server ${b.name}? It stays off until you start it again.`)) return;
+                      void run(() => serverPower(b.id, 'shutdown'));
+                    }}
+                  >
+                    Shut down
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="border-t border-divider px-5 py-3">
               <div className="mb-2 font-mono text-xs text-muted">working on</div>

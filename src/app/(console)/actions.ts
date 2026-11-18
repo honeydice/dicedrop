@@ -215,7 +215,85 @@ export async function deleteBox(id: string): Promise<Result> {
   try {
     const ctx = await operatorDb();
     if (!ctx) return DENIED;
-    const { error } = await ctx.db.from('boxes').delete().eq('id', id);
+    // Removes the box. A Contabo server is also remembered as "not a worker" so the next sync leaves it out.
+    const { error } = await ctx.db.rpc('dd_ops_remove_box', { p_box: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+// ---------------------------------------------------------------- Contabo
+
+export interface ContaboInput {
+  client_id: string;
+  client_secret: string;
+  api_user: string;
+  api_password: string;
+}
+
+function syncResult(data: unknown, error: { message: string } | null): Result {
+  if (error) return { ok: false, error: error.message };
+  const r = (data ?? {}) as { ok?: boolean; error?: string; count?: number };
+  if (!r.ok) return { ok: false, error: r.error || 'Contabo did not respond as expected.' };
+  return { ok: true, error: '', secret: String(r.count ?? 0) };
+}
+
+/** Saves the four Contabo API values (encrypted in the database vault) and runs a first sync. */
+export async function saveContabo(input: ContaboInput): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { data, error } = await ctx.db.rpc('dd_ops_contabo_save', {
+      p_client_id: input.client_id,
+      p_client_secret: input.client_secret,
+      p_api_user: input.api_user,
+      p_api_password: input.api_password,
+    });
+    return syncResult(data, error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function syncContabo(): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { data, error } = await ctx.db.rpc('dd_ops_contabo_sync');
+    return syncResult(data, error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function restoreContaboServers(): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { data, error } = await ctx.db.rpc('dd_ops_contabo_restore_ignored');
+    return syncResult(data, error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function disconnectContabo(): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_contabo_disconnect');
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function serverPower(boxId: string, action: 'start' | 'restart' | 'shutdown' | 'stop'): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_contabo_action', { p_box: boxId, p_action: action });
     return done(error);
   } catch {
     return FAILED;

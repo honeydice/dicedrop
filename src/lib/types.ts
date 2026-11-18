@@ -175,6 +175,20 @@ export interface OpsBox {
   notes: string | null;
   created_at: string;
   connection: 'online' | 'offline' | 'never';
+  has_token: boolean;
+  provider: string;
+  provider_instance_id: number | null;
+  server_label: string | null;
+  server_status: string | null;
+  server_ip: string | null;
+  server_region: string | null;
+  server_cpu: number | null;
+  server_ram_mb: number | null;
+  server_disk_mb: number | null;
+  server_product: string | null;
+  server_error: string | null;
+  server_synced_at: string | null;
+  last_action: { type: string; actor: string; created_at: string } | null;
   placed_today: number;
   open_issues: number;
   working: { id: string; order_number: string; title: string | null; claimed_at: string; account_label: string | null; stuck: boolean }[];
@@ -194,4 +208,14 @@ export interface OpsBoxes {
   boxes: OpsBox[];
   queue: { id: string; order_number: string; title: string | null; created_at: string; ship_by: string | null; client_name: string }[];
   pending_total: number;
+  contabo: { connected: boolean; last_sync_at: string | null; last_sync_error: string | null } | null;
+}
+
+export interface ContaboStatus {
+  connected: boolean;
+  api_user: string | null;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+  instance_count: number;
+  ignored: number;
 }
