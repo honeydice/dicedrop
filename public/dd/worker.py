@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -86,6 +86,13 @@ def kameleo_state():
 def ensure_playwright():
     """Playwright is only the remote control for Kameleo's browser. Install it once, next to the worker."""
     import importlib
+
+    # The remote control needs one small system library that the slim container image leaves out.
+    if not any(os.path.exists(path) for path in ("/usr/lib/x86_64-linux-gnu/libatomic.so.1", "/lib/x86_64-linux-gnu/libatomic.so.1", "/usr/lib64/libatomic.so.1")):
+        log("installing a missing system library (one time)")
+        env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+        subprocess.check_call(["apt-get", "update", "-qq"], env=env, stdout=subprocess.DEVNULL)
+        subprocess.check_call(["apt-get", "install", "-y", "-qq", "--no-install-recommends", "libatomic1"], env=env, stdout=subprocess.DEVNULL)
 
     os.makedirs(LIB, exist_ok=True)
     if LIB not in sys.path:
