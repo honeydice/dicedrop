@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.12.0"
+VERSION = "0.12.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1039,7 +1039,7 @@ def place_order(page):
     button.click()
 
     confirmed = False
-    deadline = time.time() + 90
+    deadline = time.time() + 240  # Amazon can pause on a "Verify payment" page for a while before confirming
     while time.time() < deadline:
         time.sleep(1)
         try:
@@ -1054,7 +1054,16 @@ def place_order(page):
             current_job["place_clicked"] = False
             raise Stop("Amazon says this would be a duplicate of a recent order and is asking to confirm. Nothing was ordered." + describe(page))
     if not confirmed:
-        raise Stop("Place your order was clicked, but Amazon's confirmation page did not appear. The order MAY have been placed. Check the Amazon account before trying again." + describe(page))
+        stopped_on = describe(page)
+        # No confirmation page. Look in the account's order history: if the order is listed there, it was placed.
+        try:
+            page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            if expected and expected in page.content():
+                return expected
+        except Exception:
+            pass
+        raise Stop("Place your order was clicked, but Amazon's confirmation page did not appear and the order is not in the order history yet. The order MAY have been placed. Amazon stopped on:" + stopped_on)
     settle(page)
     found = []
     try:
