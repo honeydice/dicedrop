@@ -20,14 +20,26 @@ const LOOK: Record<OrderStatus, { fg: string; bg: string }> = {
 
 type TabId = 'all' | 'pending' | 'ordering' | 'ordered' | 'shipped' | 'delivered' | 'issue';
 
+/** Solid status colors for the row label: pink pending, yellow ordering, blue ordered, green delivered. */
+const PILL: Record<string, { bg: string; fg: string }> = {
+  pending: { bg: '#f9a8d4', fg: '#500724' },
+  ordering: { bg: '#fde047', fg: '#422006' },
+  ordered: { bg: '#60a5fa', fg: '#0b1f44' },
+  shipped: { bg: '#c4b5fd', fg: '#2e1065' },
+  delivered: { bg: '#4ade80', fg: '#052e16' },
+  issue: { bg: '#f87171', fg: '#450a0a' },
+  held: { bg: '#cbd5e1', fg: '#1e293b' },
+  cancelled: { bg: '#94a3b8', fg: '#0f172a' },
+};
+
 const TABS: { id: TabId; label: string; dot: string }[] = [
   { id: 'all', label: 'All', dot: 'var(--st-all-fg)' },
-  { id: 'pending', label: 'Pending', dot: LOOK.pending.fg },
-  { id: 'ordering', label: 'Ordering', dot: LOOK.ordering.fg },
-  { id: 'ordered', label: 'Ordered', dot: LOOK.ordered.fg },
-  { id: 'shipped', label: 'Shipped', dot: LOOK.shipped.fg },
-  { id: 'delivered', label: 'Delivered', dot: LOOK.delivered.fg },
-  { id: 'issue', label: 'Issues', dot: LOOK.issue.fg },
+  { id: 'pending', label: 'Pending', dot: PILL.pending.bg },
+  { id: 'ordering', label: 'Ordering', dot: PILL.ordering.bg },
+  { id: 'ordered', label: 'Ordered', dot: PILL.ordered.bg },
+  { id: 'shipped', label: 'Shipped', dot: PILL.shipped.bg },
+  { id: 'delivered', label: 'Delivered', dot: PILL.delivered.bg },
+  { id: 'issue', label: 'Issues', dot: PILL.issue.bg },
 ];
 
 type Action = 'retry' | 'hold' | 'cancel';
@@ -308,52 +320,53 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
       >
         {shown.map((o) => {
           const look = LOOK[o.status] ?? LOOK.pending;
-          const placed = o.buy_cost !== null && o.buy_cost !== undefined;
-          const profit = o.profit === null || o.profit === undefined ? null : Number(o.profit);
+          const pill = PILL[o.status] ?? PILL.pending;
           const isOpen = open === o.id;
           const fresh = now !== null && now - new Date(o.updated_at).getTime() < 60000;
-          const who = [o.client_name, o.buyer_name, o.buyer_username, o.store_code].filter(Boolean).join(' · ');
+          const cogs = o.checkout?.items ?? null;
+          const fees = o.checkout?.tax != null || o.checkout?.shipping != null ? Number(o.checkout?.tax ?? 0) + Number(o.checkout?.shipping ?? 0) : null;
+          const total = o.buy_cost ?? o.checkout?.total ?? null;
+          const note =
+            ['ordered', 'shipped'].includes(o.status) && o.checkout?.delivery_estimate
+              ? `expected ${expected(o.checkout.delivery_estimate)}`
+              : o.status === 'issue'
+                ? (o.issue_reason ?? '')
+                : o.status === 'ordering' || o.status === 'held'
+                  ? (o.run_note ?? '')
+                  : '';
           return (
             <div key={o.id} className="border-b border-divider last:border-b-0" style={fresh ? { background: look.bg } : undefined}>
               <button
                 type="button"
                 aria-expanded={isOpen}
                 onClick={() => setOpen(isOpen ? '' : o.id)}
-                className="flex w-full items-start gap-3.5 bg-transparent px-5 py-3.5 text-left hover:bg-raised/60"
+                className="flex min-h-[38px] w-full items-center gap-3 bg-transparent px-4 py-1.5 text-left font-mono text-xs hover:bg-raised/60"
               >
-                <span aria-hidden="true" className="mt-[7px] inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: look.fg }} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-baseline gap-x-3 font-mono text-[15px]">
-                    <span className="text-fg">order.{o.status}</span>
-                    <span className="text-[13px] text-muted">{o.order_number}</span>
-                    {o.account_label ? <span className="text-[13px] text-muted">{o.account_label}</span> : null}
-                    {o.stuck ? <span className="text-[13px] text-warn">stuck</span> : null}
-                  </span>
-                  <span className="mt-1 block text-[13px] text-muted">
-                    {o.title ?? o.asin ?? 'Untitled item'}
-                    {o.quantity > 1 ? ` ×${o.quantity}` : ''}
-                    {who ? ` · ${who}` : ''}
-                  </span>
-                  {['ordered', 'shipped'].includes(o.status) && o.checkout?.delivery_estimate ? (
-                    <span className="mt-1 block font-mono text-xs text-good">
-                      {o.status === 'shipped' ? 'Shipped' : 'Ordered'} - expected {expected(o.checkout.delivery_estimate)}
-                      {o.amazon_order_id ? ` · ${o.amazon_order_id}` : ''}
-                    </span>
-                  ) : o.run_note ? (
-                    <span className="mt-1 block font-mono text-xs text-accent">{o.run_note}</span>
-                  ) : null}
-                  {o.issue_reason ? <span className="mt-1 block text-[13px] text-bad">{o.issue_reason}</span> : null}
-                  {o.cancel_requested ? <span className="mt-1 block text-[13px] text-warn">cancel requested</span> : null}
+                <span className="w-[82px] shrink-0 rounded px-2 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide" style={{ background: pill.bg, color: pill.fg }}>
+                  {o.status}
                 </span>
-                <span className="shrink-0 text-right font-mono">
-                  <span className="block text-[13px] text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</span>
-                  <span className="mt-1 block text-[13px] text-fg">{money(o.sale_price)}</span>
-                  {placed ? (
-                    <span className="block text-xs" style={{ color: profit === null ? 'rgb(var(--muted))' : profit >= 0 ? 'rgb(var(--good))' : 'rgb(var(--bad))' }}>
-                      profit {money(profit)}
+                <span className="w-[150px] shrink-0 truncate text-fg">{o.order_number}</span>
+                <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
+                <span className="min-w-0 flex-1 truncate text-muted">
+                  <span className="text-soft">{o.ship_name ?? o.buyer_name ?? ''}</span>
+                  {o.ship_name || o.buyer_name ? ' · ' : ''}
+                  {o.title ?? o.asin ?? 'Untitled item'}
+                  {o.quantity > 1 ? ` ×${o.quantity}` : ''}
+                  {note ? (
+                    <span className="ml-2" style={{ color: o.status === 'issue' ? 'rgb(var(--bad))' : look.fg }}>
+                      · {note}
                     </span>
                   ) : null}
+                  {o.stuck ? <span className="ml-2 text-warn">· stuck</span> : null}
+                  {o.cancel_requested ? <span className="ml-2 text-warn">· cancel requested</span> : null}
                 </span>
+                <span className="hidden shrink-0 text-right text-muted lg:block">
+                  cogs <span className="text-fg">{money(cogs)}</span> · fees <span className="text-fg">{money(fees)}</span>
+                </span>
+                <span className="w-[92px] shrink-0 text-right text-muted">
+                  total <span className="font-semibold text-fg">{money(total)}</span>
+                </span>
+                <span className="w-[62px] shrink-0 text-right text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</span>
               </button>
 
               {isOpen ? (
@@ -368,8 +381,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                       ['asin', o.asin ?? '—'],
                       ['price', money(o.sale_price)],
                       ['fees', money(o.sale_fees)],
-                      ['cost', placed ? money(o.buy_cost) : o.est_cost !== null ? `est. ${money(o.est_cost)}` : '—'],
-                      ['profit', money(profit)],
+                      ['cost', o.buy_cost !== null ? money(o.buy_cost) : o.est_cost !== null ? `est. ${money(o.est_cost)}` : '—'],
                       ['tracking', o.tracking_number ?? '—'],
                       ['ship_to', [o.ship_name, o.ship_line1, o.ship_city, o.ship_state, o.ship_postal].filter(Boolean).join(', ') || '—'],
                       ['checkout_items', o.checkout?.items != null ? money(o.checkout.items) : '—'],

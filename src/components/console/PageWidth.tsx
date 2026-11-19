@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
 /** Pages listed here use the full screen width; the rest keep the standard column. */
-const WIDE = ['/accounts', '/vps'];
+const WIDE = ['/accounts', '/vps', '/orders'];
 
 export function PageWidth({ children }: { children: ReactNode }) {
   const path = usePathname();
