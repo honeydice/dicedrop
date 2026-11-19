@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.12.3"
+VERSION = "0.13.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -290,6 +290,8 @@ def click_first(page, selectors):
 
 
 def snap(page):
+    if current_job.get("shot"):
+        return current_job["shot"]
     try:
         whole = bool(current_job.get("whole_page"))
         return base64.b64encode(page.screenshot(type="jpeg", quality=38 if whole else 45, full_page=whole)).decode()
@@ -1126,19 +1128,114 @@ def place_order(page):
         stopped_on = describe(page)
         raise Stop("Place your order was clicked, but no confirmation page and no new order in the order history after 4 minutes. The order MAY have been placed. Amazon stopped on:" + stopped_on)
 
-    if not on_confirmation and order_id:
-        # Amazon is still showing a payment page, but the order exists. Show the order itself for the record.
-        try:
-            page.goto("https://www.amazon.com/gp/your-account/order-details?orderID=" + order_id, wait_until="domcontentloaded", timeout=60000)
-            settle(page)
-        except Exception:
-            pass
     try:
         if history is not None:
             history.close()
     except Exception:
         pass
     return order_id
+
+
+ESTIMATE_JS = """() => {
+  const starts = /^(Arriving|Now expected|Expected|Delivered|Delivery estimate|Not yet shipped|Shipped|Out for delivery|Order received|Preparing for shipment)/i;
+  const shown = (e) => e.offsetParent !== null;
+  for (const e of document.querySelectorAll('h1,h2,h3,h4,[class*="primary-status" i],[class*="promise" i]')) {
+    const t = (e.innerText || '').trim().replace(/\\s+/g, ' ');
+    if (shown(e) && t.length < 90 && starts.test(t)) return t;
+  }
+  return '';
+}"""
+
+
+def click_text_in(scope, texts):
+    """Like click_text, but only inside one part of the page (for example, one order's card)."""
+    for text in texts:
+        if any(word in text.lower() for word in NEVER_CLICK):
+            raise Stop("Refused to click \"" + text + "\".")
+        try:
+            matches = scope.get_by_text(text, exact=True)
+            for index in range(min(matches.count(), 4)):
+                candidate = matches.nth(index)
+                if not candidate.is_visible():
+                    continue
+                target = candidate
+                try:
+                    shell = candidate.locator("xpath=ancestor-or-self::*[self::a or self::button or @role='button' or contains(concat(' ', normalize-space(@class), ' '), ' a-button ')][1]")
+                    if shell.count() > 0:
+                        inner = shell.locator("input, button, a").first
+                        target = inner if inner.count() > 0 else shell.first
+                except Exception:
+                    target = candidate
+                try:
+                    target.click(timeout=6000)
+                except Exception:
+                    target.click(timeout=6000, force=True)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def capture_tracking(page, order_id):
+    """After an order is placed: Your Orders -> that order's "Track package" -> picture of the tracking card.
+    Returns Amazon's delivery estimate (for example "Arriving December 10 - December 21"). Never raises:
+    the order is already placed, so a missing picture must not turn it into a failure."""
+    estimate = ""
+    try:
+        opened = False
+        for attempt in range(4):
+            page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            card = None
+            if order_id:
+                for selector in [".order-card", ".js-order-card", ".a-box-group", "li.order-card__list"]:
+                    try:
+                        found = page.locator(selector).filter(has_text=order_id)
+                        if found.count() > 0:
+                            card = found.first
+                            break
+                    except Exception:
+                        continue
+            scope = card if card is not None else (page if not order_id or order_id in page.content() else None)
+            if scope is not None:
+                try:
+                    estimate = " ".join((scope.locator("text=/^(Arriving|Now expected|Expected|Delivered)/").first.inner_text(timeout=3000)).split())[:90]
+                except Exception:
+                    pass
+                if click_text_in(scope, ["Track package", "Track Package"]):
+                    opened = True
+                    break
+            time.sleep(6)  # a brand-new order can take a moment to show up
+        if not opened:
+            return estimate
+        settle(page)
+        for _ in range(20):
+            try:
+                seen = page.evaluate(ESTIMATE_JS)
+            except Exception:
+                seen = ""
+            if seen:
+                estimate = seen
+                break
+            time.sleep(0.5)
+        pause(1.0, 2.0)
+        # Picture of just the tracking card: the smallest block that holds the estimate and the progress steps.
+        try:
+            heading = page.locator("text=/^(Arriving|Now expected|Expected|Delivered|Not yet shipped|Out for delivery)/").first
+            block = heading.locator("xpath=ancestor::*[contains(., 'Shipped') and contains(., 'Delivered')][1]")
+            if block.count() > 0 and block.first.is_visible():
+                current_job["shot"] = base64.b64encode(block.first.screenshot(type="jpeg", quality=70)).decode()
+        except Exception:
+            pass
+        if not current_job.get("shot"):
+            try:
+                page.evaluate("window.scrollTo(0, 0)")
+                current_job["shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
+            except Exception:
+                pass
+    except Exception as failure:
+        log("could not capture the tracking card: " + str(failure)[:200])
+    return estimate
 
 
 def read_totals(page):
@@ -1181,6 +1278,7 @@ def cart_only_job(job):
         current_job["whole_page"] = True
         current_job["place_clicked"] = False
         current_job["duplicate_confirmed"] = False
+        current_job["shot"] = ""
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
         ship = order["ship_to"]
@@ -1244,10 +1342,11 @@ def cart_only_job(job):
                 progress(note="placing the order · total $" + format(totals["total"], ".2f"))
                 totals["amazon_order_id"] = place_order(page)
                 totals["placed"] = True
-                try:
-                    page.evaluate("window.scrollTo(0, 0)")
-                except Exception:
-                    pass
+                stage[0] = "capturing the tracking card"
+                progress(note="ordered · capturing the tracking card")
+                estimate = capture_tracking(page, totals["amazon_order_id"])
+                if estimate:
+                    totals["delivery_estimate"] = estimate
             return totals
 
         totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
@@ -1264,6 +1363,7 @@ def cart_only_job(job):
     except Exception as failure:
         progress(done=True, error="The cart run could not start: " + str(failure)[:200], note="stopped")
     finally:
+        current_job["shot"] = ""
         current_job["whole_page"] = False
         current_job["text"] = ""
         job_lock.release()

@@ -58,6 +58,11 @@ const EMPTY: OpsOrders = {
   clients: [],
 };
 
+/** Amazon words its estimate as "Arriving December 10 - December 21". Keep just the date part. */
+function expected(estimate: string): string {
+  return estimate.replace(/^(Arriving|Now expected|Expected|Delivery estimate)\s*(by\s+)?:?\s*/i, '').trim() || estimate;
+}
+
 export function OrdersView({ initial, initialError }: { initial: OpsOrders | null; initialError: string }) {
   const [client, setClient] = useState('');
   const args = useMemo(() => ({ p_client: client || null }), [client]);
@@ -316,7 +321,14 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                     {o.quantity > 1 ? ` ×${o.quantity}` : ''}
                     {who ? ` · ${who}` : ''}
                   </span>
-                  {o.run_note ? <span className="mt-1 block font-mono text-xs text-accent">{o.run_note}</span> : null}
+                  {['ordered', 'shipped'].includes(o.status) && o.checkout?.delivery_estimate ? (
+                    <span className="mt-1 block font-mono text-xs text-good">
+                      {o.status === 'shipped' ? 'Shipped' : 'Ordered'} - expected {expected(o.checkout.delivery_estimate)}
+                      {o.amazon_order_id ? ` · ${o.amazon_order_id}` : ''}
+                    </span>
+                  ) : o.run_note ? (
+                    <span className="mt-1 block font-mono text-xs text-accent">{o.run_note}</span>
+                  ) : null}
                   {o.issue_reason ? <span className="mt-1 block text-[13px] text-bad">{o.issue_reason}</span> : null}
                   {o.cancel_requested ? <span className="mt-1 block text-[13px] text-warn">cancel requested</span> : null}
                 </span>
@@ -352,6 +364,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                       ['checkout_tax', o.checkout?.tax != null ? money(o.checkout.tax) : '—'],
                       ['checkout_total', o.checkout?.total != null ? money(o.checkout.total) : '—'],
                       ['gift', o.checkout?.gift ?? '—'],
+                      ['expected', o.checkout?.delivery_estimate ? expected(o.checkout.delivery_estimate) : '—'],
                     ].map(([k, v]) => (
                       <div key={k}>
                         <dt className="text-muted">{k}</dt>
