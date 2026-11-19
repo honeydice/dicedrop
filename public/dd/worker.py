@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.17.3"
+VERSION = "0.17.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1345,85 +1345,51 @@ def click_text_in(scope, texts):
 
 
 def capture_tracking(page, order_id):
-    """After an order is placed: Your Orders -> that order's "Track package" -> picture of the tracking card.
-    Returns Amazon's delivery estimate (for example "Arriving December 10 - December 21"). Never raises:
-    the order is already placed, so a missing picture must not turn it into a failure."""
+    """After an order is placed: open that exact order on Amazon and take its picture. Keeps trying until the
+    order itself is on screen (a brand-new order can take a minute to show, and Amazon sometimes answers
+    "We're unable to load your order details"). Returns the delivery estimate. A picture is only ever taken of a
+    page that shows this order. Never raises: the order is already placed."""
     estimate = ""
+    current_job["shot"] = ""
+    if not order_id:
+        log("after ordering: Amazon did not show an order number, so the picture is left to the next order check")
+        return estimate
     try:
-        opened = False
-        for attempt in range(4):
-            page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
-            settle(page)
-            card = None
-            if order_id:
-                for selector in [".order-card", ".js-order-card", ".a-box-group", "li.order-card__list"]:
-                    try:
-                        found = page.locator(selector).filter(has_text=order_id)
-                        if found.count() > 0:
-                            card = found.first
-                            break
-                    except Exception:
-                        continue
-            scope = card if card is not None else (page if not order_id or order_id in page.content() else None)
-            if scope is not None:
+        import re
+
+        kind, card_words = open_order(page, order_id, tries=10, wait=12.0)
+        if not kind:
+            log("after ordering: order " + str(order_id) + " could not be opened on Amazon yet; the next order check takes its picture")
+            return estimate
+        if kind == "track":
+            for _ in range(20):
                 try:
-                    estimate = " ".join((scope.locator("text=/^(Arriving|Now expected|Expected|Delivered)/").first.inner_text(timeout=3000)).split())[:90]
+                    seen = page.evaluate(ESTIMATE_JS)
                 except Exception:
-                    pass
-                if click_text_in(scope, ["Track package", "Track Package"]):
-                    opened = True
+                    seen = ""
+                if seen:
+                    estimate = seen
                     break
-            time.sleep(6)  # a brand-new order can take a moment to show up
-        if not opened:
-            # A brand-new order often has no Track package button yet: use the order's own page instead.
-            log("tracking card: Track package not offered yet for " + str(order_id) + " (order shown in the list: " + str(card is not None) + "); using the order page")
-            if order_id:
-                page.goto(ORDER_DETAILS + order_id, wait_until="domcontentloaded", timeout=90000)
-                settle(page)
-                try:
-                    if click_text(page, ["Track package", "Track Package"]):
-                        opened = True
-                except Exception:
-                    opened = False
-            if not opened:
-                import re
-                words = page_words(page, 5000)
-                found = re.search(r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery):?\s+(?:today|tomorrow|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))", words)
-                if found and not estimate:
-                    estimate = " ".join(found.group(1).split())[:90]
-                try:
-                    page.evaluate("window.scrollTo(0, 0)")
-                    current_job["shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
-                except Exception:
-                    pass
-                return estimate
-        settle(page)
-        for _ in range(20):
-            try:
-                seen = page.evaluate(ESTIMATE_JS)
-            except Exception:
-                seen = ""
-            if seen:
-                estimate = seen
-                break
-            time.sleep(0.5)
-        pause(1.0, 2.0)
-        # Picture of just the tracking card: the smallest block that holds the estimate and the progress steps.
-        try:
-            heading = page.locator("text=/^(Arriving|Now expected|Expected|Delivered|Not yet shipped|Out for delivery)/").first
-            block = heading.locator("xpath=ancestor::*[contains(., 'Shipped') and contains(., 'Delivered')][1]")
-            if block.count() > 0 and block.first.is_visible():
-                current_job["shot"] = base64.b64encode(block.first.screenshot(type="jpeg", quality=70)).decode()
-        except Exception:
-            pass
-        if not current_job.get("shot"):
-            try:
-                page.evaluate("window.scrollTo(0, 0)")
-                current_job["shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
-            except Exception:
-                pass
+                time.sleep(0.5)
+            pause(1.0, 2.0)
+            current_job["shot"] = picture(page, card_only=True)
+        elif kind == "details":
+            found = re.search(DATE_RE, page_words(page, 6000))
+            estimate = " ".join(found.group(1).split())[:90] if found else ""
+            current_job["shot"] = picture(page, card_only=False)
+        else:  # the order's own card in Your Orders
+            found = re.search(DATE_RE, card_words)
+            estimate = " ".join(found.group(1).split())[:90] if found else ""
+            card = order_card(page, order_id)
+            if card is not None:
+                card.scroll_into_view_if_needed(timeout=5000)
+                current_job["shot"] = base64.b64encode(card.screenshot(type="jpeg", quality=70)).decode()
+        if not estimate and card_words:
+            found = re.search(DATE_RE, card_words)
+            estimate = " ".join(found.group(1).split())[:90] if found else ""
+        log("after ordering: order " + str(order_id) + " opened (" + kind + "), picture " + ("taken" if current_job.get("shot") else "missing"))
     except Exception as failure:
-        log("could not capture the tracking card: " + str(failure)[:200])
+        log("could not capture the order picture: " + str(failure)[:200])
     return estimate
 
 
@@ -1528,64 +1494,126 @@ def read_tracking(page, result, card_words=""):
     return result
 
 
+DATE_RE = r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery|Delivery|Delivered):?\s+(?:today|tomorrow|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))"
+
+
+def order_page_ok(page, number, tracking=False):
+    """True only when the page on screen really shows this order (not Amazon's "unable to load" page)."""
+    try:
+        low = page_words(page, 4000).lower()
+        if "unable to load" in low:
+            return False
+        if number in page.url or number in page.content():
+            return True
+        if tracking:
+            return bool(page.evaluate(STATUS_JS) or page.evaluate(ESTIMATE_JS))
+    except Exception:
+        pass
+    return False
+
+
+def open_order(page, number, tries=2, wait=6.0):
+    """Gets one specific order on screen, the way a person would: Your Orders, that order, Track package
+    (or View order details). Tries again when the order is not showing yet or Amazon says it cannot load it.
+    Returns (kind, the order card's words). kind is "track", "details", "list" (only the order's card in
+    Your Orders could be shown) or "" when the order could not be seen at all."""
+    card_words = ""
+    for attempt in range(tries):
+        last = attempt == tries - 1
+        try:
+            page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            card = order_card(page, number)
+            if card is not None:
+                try:
+                    card_words = " ".join(card.inner_text(timeout=5000).split())
+                except Exception:
+                    card_words = ""
+                if state_from_words(card_words, short=True) != "cancelled" and click_text_in(card, ["Track package", "Track Package"]):
+                    settle(page)
+                    if order_page_ok(page, number, tracking=True):
+                        return "track", card_words
+                    page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+                    settle(page)
+                    card = order_card(page, number)
+                if card is not None and click_text_in(card, ["View order details", "Order details", "View order"]):
+                    settle(page)
+                    if order_page_ok(page, number):
+                        return "details", card_words
+                if last:
+                    page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+                    settle(page)
+                    if order_card(page, number) is not None:
+                        return "list", card_words
+            else:
+                # Not on the first page of Your Orders (older order), or too new to be listed: its own address.
+                page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+                if order_page_ok(page, number):
+                    try:
+                        if state_from_words(page_words(page, 6000)) != "cancelled" and click_text(page, ["Track package", "Track Package"]):
+                            settle(page)
+                            if order_page_ok(page, number, tracking=True):
+                                return "track", card_words
+                            page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+                            settle(page)
+                    except Stop:
+                        raise
+                    except Exception:
+                        pass
+                    if order_page_ok(page, number):
+                        return "details", card_words
+        except Stop:
+            raise
+        except Exception as failure:
+            log("opening order " + number + ": " + str(failure)[:160])
+        log("order " + number + " is not showing on Amazon yet (try " + str(attempt + 1) + " of " + str(tries) + ")")
+        if not last:
+            time.sleep(wait)
+    return "", card_words
+
+
 def check_order(page, order):
     """Looks one placed order up on Amazon the way a person would: Your Orders, that order, Track package.
     Returns what Amazon shows: state (ordered, shipped, delivered, cancelled), the delivery estimate, the
-    tracking number and carrier when shown, a short note, and a picture."""
+    tracking number and carrier when shown, a short note, and a picture. The picture is only ever of a page
+    that shows this order; when the order cannot be opened, nothing is reported as changed."""
     import re
 
     number = order["amazon_order_id"]
-    result = {"state": "ordered", "delivery_estimate": "", "tracking_number": "", "carrier": "", "note": "", "screenshot": ""}
-    details = ORDER_DETAILS + number
+    result = {"state": order.get("status") if order.get("status") in ("ordered", "shipped") else "ordered",
+              "delivery_estimate": "", "tracking_number": "", "carrier": "", "note": "", "screenshot": ""}
 
-    page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
-    settle(page)
-    card = order_card(page, number)
-    card_words = ""
-    if card is not None:
-        try:
-            card_words = " ".join(card.inner_text(timeout=5000).split())
-        except Exception:
-            card_words = ""
-
-    opened_track = False
-    if card is not None and state_from_words(card_words, short=True) != "cancelled":
-        opened_track = click_text_in(card, ["Track package", "Track Package"])
-    if opened_track:
+    kind, card_words = open_order(page, number, tries=3, wait=6.0)
+    if not kind:
+        log("order " + number + " could not be opened on Amazon this time; it is checked again next round")
+        return result
+    if kind == "track":
+        result["state"] = "ordered"
         return read_tracking(page, result, card_words)
 
-    # No Track package button (a cancelled order has none), or the order is not on the first page: open the order itself.
-    if card is None or not click_text_in(card, ["View order details", "Order details", "View order"]):
-        page.goto(details, wait_until="domcontentloaded", timeout=90000)
-    settle(page)
-    words = page_words(page, 6000)
+    words = card_words if kind == "list" else page_words(page, 6000)
     from_card = state_from_words(card_words, short=True) if card_words else "ordered"
-    result["state"] = from_card if from_card != "ordered" else state_from_words(words)
-    if result["state"] != "cancelled":
-        # An order past the first page of Your Orders: its own page has the same Track package button.
-        try:
-            if click_text(page, ["Track package", "Track Package"]):
-                return read_tracking(page, result, card_words)
-        except Stop:
-            raise
-        except Exception:
-            pass
+    result["state"] = from_card if from_card != "ordered" else state_from_words(words, short=(kind == "list"))
     if result["state"] == "cancelled":
         result["note"] = ""  # the status itself says it: Cancelled by Amazon
     else:
         found = re.search(r"((?:Delivered|Shipped|On the way|Out for delivery)[^.]{0,60})", card_words + " " + words)
         result["note"] = found.group(1).strip()[:120] if found else ""
-    found = re.search(r"((?:Arriving|Now expected|Delivered)[^.]{3,60})", card_words + " " + words)
-    if found and result["state"] != "cancelled":
-        result["delivery_estimate"] = found.group(1).strip()[:90]
-    if result["state"] != "cancelled":
-        # Amazon words the date several ways; take just the date part when it is there.
-        dated = re.search(r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery|Delivery|Delivered):?\s+(?:today|tomorrow|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))", card_words + " " + words)
+        dated = re.search(DATE_RE, card_words + " " + words)
         if dated:
             result["delivery_estimate"] = " ".join(dated.group(1).split())[:90]
-        elif not result["delivery_estimate"]:
-            log("no delivery date found for " + number + " (in the list: " + str(card is not None) + "); the page says: " + " ".join(words.split())[:700])
-    result["screenshot"] = picture(page, card_only=False)
+        else:
+            log("no delivery date found for " + number + " (" + kind + "); the page says: " + " ".join(words.split())[:700])
+    if kind == "list":
+        try:
+            card = order_card(page, number)
+            card.scroll_into_view_if_needed(timeout=5000)
+            result["screenshot"] = base64.b64encode(card.screenshot(type="jpeg", quality=70)).decode()
+        except Exception:
+            result["screenshot"] = ""
+    else:
+        result["screenshot"] = picture(page, card_only=False)
     return result
 
 
