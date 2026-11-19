@@ -158,6 +158,11 @@ export interface OpsAccount {
   order_scan: boolean;
   password_set: boolean;
   awaiting_tracking: number;
+  signin_requested_at: string | null;
+  signin_note: string | null;
+  exit_ip: string | null;
+  has_profile: boolean;
+  snapshot_at: string | null;
   orders_today: number;
   spent_today: number;
   orders_total: number;

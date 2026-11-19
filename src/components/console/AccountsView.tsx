@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { getSnapshot, requestSignin, updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -21,6 +21,7 @@ function isReady(a: OpsAccount): boolean {
 
 /** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
 function signIn(a: OpsAccount): { text: string; color: string } {
+  if (a.signin_requested_at) return { text: a.signin_note ?? 'signing in', color: 'rgb(var(--accent))' };
   if (a.status === 'paused') return { text: 'paused', color: TONE.muted };
   if (a.status === 'locked' || a.session_state === 'locked') return { text: 'locked', color: TONE.bad };
   if (a.session_state === 'verification') return { text: 'needs verification', color: TONE.warn };
@@ -74,6 +75,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState('');
+  const [shot, setShot] = useState<{ label: string; taken_at: string; note: string | null; image: string } | null>(null);
   const [copied, setCopied] = useState('');
   const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
@@ -179,6 +181,24 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             void refresh();
           }}
         />
+      ) : null}
+
+      {shot ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:p-10" onMouseDown={(e) => e.target === e.currentTarget && setShot(null)}>
+          <div role="dialog" aria-modal="true" aria-label={`Last screenshot for ${shot.label}`} className="w-full max-w-5xl overflow-hidden rounded-2xl border border-line bg-panel">
+            <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+              <div className="font-mono text-[13px] text-muted">
+                screenshot · {shot.label} · {new Date(shot.taken_at).toLocaleString()}
+                {shot.note ? ` · ${shot.note}` : ''}
+              </div>
+              <button type="button" className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-muted hover:text-fg" onClick={() => setShot(null)}>
+                close
+              </button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`data:image/jpeg;base64,${shot.image}`} alt={`What the worker saw on ${shot.label}`} className="block w-full" />
+          </div>
+        </div>
       ) : null}
 
       <section aria-label="Account health" className="mb-5 flex flex-wrap gap-3">
@@ -382,6 +402,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                           ['open issues', String(a.open_issues)],
                           ['orders all time', String(a.orders_total)],
                           ['sign-in', sessionLabel(a.session_state)],
+                          ['outgoing ip', a.exit_ip ?? 'not checked yet'],
+                          ['device identity', a.has_profile ? 'created' : 'not created yet'],
                           ['last seen', a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'],
                         ]}
                       />
@@ -395,6 +417,24 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     <button type="button" disabled={busy} className={btn} onClick={() => void patch(a.id, { status: a.status === 'paused' ? 'active' : 'paused' })}>
                       {a.status === 'paused' ? 'Resume account' : 'Pause account'}
                     </button>
+                    <button type="button" disabled={busy || Boolean(a.signin_requested_at) || a.box_online !== true} className={btn} onClick={() => void run(() => requestSignin(a.id))}>
+                      {a.signin_requested_at ? 'Signing in' : a.session_state === 'signed_in' ? 'Check sign-in' : 'Sign in now'}
+                    </button>
+                    {a.snapshot_at ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className={btn}
+                        onClick={async () => {
+                          const result = await getSnapshot(a.id);
+                          if (result) setShot({ label: a.label, ...result });
+                          else setError('That screenshot could not be loaded. Try again.');
+                        }}
+                      >
+                        View last screenshot
+                      </button>
+                    ) : null}
+                    {a.box_online !== true ? <span className="font-mono text-xs text-muted">sign-in needs this account&apos;s vps online</span> : null}
                   </div>
                 </div>
               ) : null}

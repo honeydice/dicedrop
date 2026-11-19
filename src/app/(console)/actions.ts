@@ -221,6 +221,30 @@ export async function saveAccount(id: string | null, input: AccountForm): Promis
   }
 }
 
+/** Asks the account's box to sign it in to Amazon. The box picks this up on its next check-in. */
+export async function requestSignin(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_request_signin', { p_account: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** The last screenshot the worker took on this account, as a base64 JPEG. */
+export async function getSnapshot(id: string): Promise<{ taken_at: string; note: string | null; image: string } | null> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return null;
+    const { data } = await ctx.db.rpc('dd_ops_account_snapshot', { p_account: id });
+    return (data as { taken_at: string; note: string | null; image: string } | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------- Proxies
 
 /** Imports proxies from pasted or uploaded lines shaped host:port:username:password. Passwords go to the vault. */
