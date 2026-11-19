@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.10.3"
+VERSION = "0.11.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -289,7 +289,8 @@ def click_first(page, selectors):
 
 def snap(page):
     try:
-        return base64.b64encode(page.screenshot(type="jpeg", quality=45, full_page=False)).decode()
+        whole = bool(current_job.get("whole_page"))
+        return base64.b64encode(page.screenshot(type="jpeg", quality=38 if whole else 45, full_page=whole)).decode()
     except Exception:
         return ""
 
@@ -622,9 +623,22 @@ def click_text(page, texts):
             matches = page.get_by_text(text, exact=True)
             for index in range(min(matches.count(), 5)):
                 candidate = matches.nth(index)
-                if candidate.is_visible():
-                    candidate.click()
-                    return True
+                if not candidate.is_visible():
+                    continue
+                # Amazon's yellow buttons are a caption with an invisible input laid over it. Click the real control.
+                target = candidate
+                try:
+                    shell = candidate.locator("xpath=ancestor-or-self::*[self::a or self::button or @role='button' or contains(concat(' ', normalize-space(@class), ' '), ' a-button ')][1]")
+                    if shell.count() > 0:
+                        inner = shell.locator("input, button").first
+                        target = inner if inner.count() > 0 else shell.first
+                except Exception:
+                    target = candidate
+                try:
+                    target.click(timeout=6000)
+                except Exception:
+                    target.click(timeout=6000, force=True)
+                return True
         except Exception:
             continue
     return False
@@ -796,6 +810,18 @@ def add_address_at_checkout(page, ship):
     add_new = ["#add-new-address-popover-link", "#add-new-address-desktop-sasp-tango-link", "a:has-text('Add a new delivery address')", "a:has-text('Add a new address')"]
     form_open = lambda: visible(page, prefix + "FullName") or visible(page, prefix + "Line1")
 
+    def delivering_to_buyer():
+        try:
+            for words in ["Delivering to " + ship["name"], "Shipping to " + ship["name"]]:
+                if page.get_by_text(words, exact=False).first.is_visible():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if delivering_to_buyer():
+        return "already set"
+
     if not form_open():
         if not any(visible(page, selector) for selector in add_new):
             link = delivery_change_link(page)
@@ -803,6 +829,27 @@ def add_address_at_checkout(page, ship):
                 raise Stop("Could not find the delivery \"Change\" link on Amazon's checkout page." + describe(page))
             link.click()
             settle(page)
+        # If this buyer's address is already saved on the account, pick it instead of adding it a second time.
+        try:
+            saved = page.get_by_text(ship["name"], exact=True)
+            for index in range(min(saved.count(), 6)):
+                entry = saved.nth(index)
+                if not entry.is_visible():
+                    continue
+                row = entry.locator("xpath=ancestor::*[contains(., '" + ship["postal_code"][:5] + "')][1]")
+                if row.count() == 0:
+                    continue
+                entry.click()
+                pause(0.6, 1.2)
+                if click_text(page, ["Deliver to this address", "Use this address", "Ship to this address"]) or safe_click(page, ["#shipToThisAddressButton input", "input[data-testid='Address_selectShipToThisAddress']"]):
+                    settle(page)
+                    for _ in range(20):
+                        if delivering_to_buyer():
+                            return "picked the saved address"
+                        time.sleep(0.5)
+                break
+        except Exception:
+            pass
         if not form_open() and not safe_click(page, add_new):
             raise Stop("Could not find \"Add a new delivery address\" on Amazon's checkout page." + describe(page))
         for _ in range(20):
@@ -902,6 +949,77 @@ def add_address_at_checkout(page, ship):
         raise Stop("The address was sent, but the checkout page does not show the buyer's name yet." + describe(page))
 
 
+def add_gift(page, gift):
+    """Marks the order as a gift: "Add gift options" -> message and sender -> save. Works only inside the popup.
+    Returns a short note. If Amazon does not offer gift options for the item, the run simply carries on."""
+    if not gift or not gift.get("enabled") or not (gift.get("message") or "").strip():
+        return "gift off"
+    if not click_text(page, ["Add gift options", "Change gift options", "Add a gift receipt for easy returns"]):
+        return "gift not offered"
+    message_box = None
+    for attempt in range(24):
+        message_box = first_visible(page, "textarea[id*='message' i], textarea[name*='message' i], textarea")
+        if message_box is not None:
+            break
+        if attempt == 8:
+            # Some layouts want "this is a gift" ticked before the message box appears.
+            try:
+                tick = page.get_by_label("gift", exact=False).first
+                if tick.is_visible():
+                    tick.check()
+            except Exception:
+                pass
+        time.sleep(0.5)
+    if message_box is None:
+        raise Stop("The gift options opened, but there is no message box." + describe(page))
+    pause(0.6, 1.2)
+
+    sender = None
+    for selector in ["input[id*='sender' i]", "input[name*='sender' i]", "input[id*='gift' i][id*='from' i]", "input[name*='from' i]", "input[aria-label*='From' i]", "input[placeholder*='From' i]"]:
+        sender = first_visible(page, selector)
+        if sender is not None:
+            break
+    if sender is None:
+        try:
+            candidate = page.get_by_label("From", exact=False).first
+            if candidate.is_visible():
+                sender = candidate
+        except Exception:
+            sender = None
+
+    text = gift["message"].strip()
+    who = (gift.get("from") or "").strip()
+    if sender is None and who:
+        text = text + " From " + who
+    message_box.click()
+    pause(0.2, 0.5)
+    message_box.fill("")
+    message_box.press_sequentially(text, delay=random.randint(40, 90))
+    pause(0.4, 0.8)
+    if sender is not None and who:
+        sender.click()
+        pause(0.2, 0.4)
+        sender.fill("")
+        sender.press_sequentially(who, delay=random.randint(50, 110))
+        pause(0.4, 0.8)
+
+    saved = click_text(page, ["Save gift options", "Save gift options and continue", "Save and continue", "Save"]) or safe_click(page, [
+        "input[aria-labelledby*='gift' i][type='submit']", "span[id*='gift' i][id*='save' i] input", "input[name*='gift' i][type='submit']"])
+    if not saved:
+        raise Stop("Could not find the save button in the gift options." + describe(page))
+    for _ in range(30):
+        try:
+            if not message_box.is_visible():
+                break
+        except Exception:
+            break
+        time.sleep(0.5)
+    else:
+        raise Stop("The gift options did not close after saving." + describe(page))
+    settle(page)
+    return "gift added" + ("" if sender is not None or not who else " (sender written into the message)")
+
+
 def read_totals(page):
     import re
 
@@ -939,6 +1057,7 @@ def cart_only_job(job):
 
     try:
         current_job["text"] = "cart run " + job.get("order_number", "")
+        current_job["whole_page"] = True
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
         ship = order["ship_to"]
@@ -984,23 +1103,29 @@ def cart_only_job(job):
             stage[0] = "adding the buyer's address at checkout"
             progress(note="adding the buyer's address")
             add_address_at_checkout(page, ship)
+            stage[0] = "adding the gift message"
+            progress(note="adding the gift message")
+            gift_note = add_gift(page, order.get("gift"))
             stage[0] = "reading the totals"
             try:
                 page.evaluate("window.scrollTo(0, 0)")
             except Exception:
                 pass
             pause()
-            return read_totals(page)
+            totals = read_totals(page)
+            totals["gift"] = gift_note
+            return totals
 
         totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
         if error:
             progress(done=True, error=error, note="stopped", screenshot=shot)
         else:
-            progress(done=True, note="cart ready · address added · not ordered", screenshot=shot, checkout=totals or {})
+            progress(done=True, note="cart ready · address added · " + str((totals or {}).get("gift", "gift step skipped")) + " · not ordered", screenshot=shot, checkout=totals or {})
         log("cart run " + job.get("order_number", "") + " finished" + (": " + error if error else ""))
     except Exception as failure:
         progress(done=True, error="The cart run could not start: " + str(failure)[:200], note="stopped")
     finally:
+        current_job["whole_page"] = False
         current_job["text"] = ""
         job_lock.release()
 

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, saveGift, setAccountsPerBox, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
@@ -43,6 +43,7 @@ export function SettingsView({
   proxies,
   perBox,
   kameleoSetAt,
+  gift,
 }: {
   selectors: SelectorRow[];
   operators: string[];
@@ -54,6 +55,7 @@ export function SettingsView({
   proxies: OpsProxy[];
   perBox: number;
   kameleoSetAt: string | null;
+  gift: { enabled: boolean; from: string; message: string };
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -86,6 +88,7 @@ export function SettingsView({
   const [keyDraft, setKeyDraft] = useState('');
   const [card, setCard] = useState({ bank: '', last4: '', nickname: '' });
   const [kameleoDraft, setKameleoDraft] = useState('');
+  const [giftDraft, setGiftDraft] = useState(gift);
   const [perBoxDraft, setPerBoxDraft] = useState(String(perBox));
   const [proxyText, setProxyText] = useState('');
   const [proxyProvider, setProxyProvider] = useState('');
@@ -125,6 +128,7 @@ export function SettingsView({
     proxies: `${proxies.length} proxies · ${proxiesFree} free`,
     cards: `${cards.length} card${cards.length === 1 ? '' : 's'}`,
     'two-step codes': `${generating} of ${twoStep.length} generating`,
+    gift: gift.enabled ? `on · from ${gift.from || 'no sender'}` : 'off',
     'vps capacity': `${perBox} accounts per vps`,
     'day boundary': timezone,
     selectors: `${selectors.length} selectors`,
@@ -511,6 +515,37 @@ export function SettingsView({
               ))
             )}
           </div>
+        </Section>
+
+        <Section title="gift" summary={summary['gift']} open={openSet.has('gift')} onToggle={toggle}>
+          <form
+            className="grid gap-3 px-5 py-4 sm:grid-cols-[auto_1fr_2fr_auto] sm:items-end"
+            autoComplete="off"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save(() => saveGift(giftDraft.enabled, giftDraft.from, giftDraft.message));
+            }}
+          >
+            <label htmlFor="gift-on" className="flex min-h-[44px] cursor-pointer items-center gap-2.5 text-sm text-fg">
+              <input id="gift-on" type="checkbox" checked={giftDraft.enabled} onChange={(e) => setGiftDraft({ ...giftDraft, enabled: e.target.checked })} className="h-5 w-5 accent-[rgb(var(--accent))]" />
+              Send as gift
+            </label>
+            <div>
+              <label htmlFor="gift-from" className={label}>
+                From
+              </label>
+              <input id="gift-from" maxLength={40} value={giftDraft.from} onChange={(e) => setGiftDraft({ ...giftDraft, from: e.target.value })} className={field} />
+            </div>
+            <div>
+              <label htmlFor="gift-msg" className={label}>
+                Message
+              </label>
+              <input id="gift-msg" maxLength={240} value={giftDraft.message} onChange={(e) => setGiftDraft({ ...giftDraft, message: e.target.value })} className={field} />
+            </div>
+            <button type="submit" disabled={busy} className={btn}>
+              Save
+            </button>
+          </form>
         </Section>
 
         <Section title="vps capacity" summary={summary['vps capacity']} open={openSet.has('vps capacity')} onToggle={toggle}>
