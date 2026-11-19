@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -201,6 +201,15 @@ def snap(page):
         return ""
 
 
+def page_words(page, limit=220):
+    """A short, readable sample of what the page says, so a stop can explain itself."""
+    try:
+        text = " ".join(page.locator("body").first.inner_text(timeout=4000).split())
+        return text[:limit]
+    except Exception:
+        return ""
+
+
 def amazon_sign_in(page, label, secrets):
     """Walks Amazon's sign-in screens one at a time. Returns (state, error text)."""
     page.goto(HOME_PAGE, wait_until="domcontentloaded", timeout=90000)
@@ -210,6 +219,7 @@ def amazon_sign_in(page, label, secrets):
 
     entered_password = False
     entered_code = False
+    steps = []
     for _ in range(10):
         url = page.url
         if visible(page, CAPTCHA):
@@ -238,6 +248,7 @@ def amazon_sign_in(page, label, secrets):
                 time.sleep(int(code.get("expires_in", 5)) + 1)
                 code = call("/api/worker/v1/totp", {"account": label})
             report(label, note="entering the two-step code")
+            steps.append("code")
             human_type(page, OTP, code["code"])
             if visible(page, "#auth-mfa-remember-device"):
                 try:
@@ -248,6 +259,9 @@ def amazon_sign_in(page, label, secrets):
             entered_code = True
         elif visible(page, PASSWORD):
             report(label, note="entering the password")
+            steps.append("password")
+            if steps.count("password") > 2:
+                return "needs_sign_in", "Amazon did not accept the password. The page says: " + page_words(page)
             human_type(page, PASSWORD, secrets["password"])
             if visible(page, "input[name='rememberMe']"):
                 try:
@@ -258,6 +272,9 @@ def amazon_sign_in(page, label, secrets):
             entered_password = True
         elif visible(page, EMAIL):
             report(label, note="entering the email")
+            steps.append("email")
+            if steps.count("email") > 2:
+                return "needs_sign_in", "Amazon did not move past the email step. The page says: " + page_words(page)
             human_type(page, EMAIL, secrets["login_email"])
             click_first(page, ["input#continue", "#continue input", "#continue", "input[type='submit']"])
         elif click_first(page, ["#ap-account-fixup-phone-skip-link", "a#ap-account-fixup-phone-skip-link", "#auth-account-fixup-skip-link"]):
@@ -270,7 +287,7 @@ def amazon_sign_in(page, label, secrets):
                 title = page.title()[:80]
             except Exception:
                 pass
-            return "needs_sign_in", "Stopped on a page the worker does not know yet: " + title
+            return "needs_sign_in", "Stopped on a page the worker does not know yet: " + title + ". The page says: " + page_words(page)
 
         try:
             page.wait_for_load_state("domcontentloaded", timeout=45000)
@@ -278,7 +295,7 @@ def amazon_sign_in(page, label, secrets):
             pass
         pause(2.0, 4.0)
 
-    return "needs_sign_in", "Amazon kept asking for more steps than expected."
+    return "needs_sign_in", "Amazon kept asking for more steps (" + ", ".join(steps[-6:]) + "). The page says: " + page_words(page)
 
 
 ERR_FILE = "/app/driver-errors.log"
@@ -357,7 +374,7 @@ def run_in_account_browser(label, note, work):
             finally:
                 shot = snap(page)
     except Stop as stop:
-        error = str(stop)[:400]
+        error = str(stop)[:600]
     except Exception as failure:
         error = "While " + stage[0] + ": " + str(failure)[:300]
     finally:
