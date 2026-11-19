@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -160,7 +160,8 @@ OTP = "#auth-mfa-otpcode, input[name='otpCode']"
 CAPTCHA = "#auth-captcha-image, #captchacharacters, form[action*='validateCaptcha'], iframe[src*='captcha']"
 ERROR_BOX = "#auth-error-message-box, #auth-warning-message-box"
 HOME_PAGE = "https://www.amazon.com/"
-ACCOUNT_PAGE = "https://www.amazon.com/gp/css/homepage.html"
+# Order history is only shown to a signed-in shopper; signed out, Amazon sends the browser to its sign-in page.
+ACCOUNT_PAGE = "https://www.amazon.com/gp/your-account/order-history"
 SITE_MARK = "amazon.com"
 REQUIRE_GREETING = True
 
