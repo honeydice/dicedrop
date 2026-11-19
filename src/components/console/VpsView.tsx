@@ -99,37 +99,6 @@ export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBox
         <Tile label="Placed today" value={String(placedToday)} />
       </section>
 
-      {token ? (
-        <div role="status" className="mb-5 overflow-hidden rounded-2xl border border-accent/50 bg-panel">
-          <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
-            <div className="font-mono text-[13px] text-muted">install {token.box}</div>
-            <button type="button" className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-muted hover:text-fg" onClick={() => setToken(null)}>
-              close
-            </button>
-          </div>
-          <div className="px-5 py-4">
-            <code className="block break-all rounded-[10px] border border-edge bg-raised px-3.5 py-3 font-mono text-[13px] text-fg">{installCommand(token.value)}</code>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                className={btnAccent}
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(installCommand(token.value));
-                    setCopiedCmd(true);
-                    setTimeout(() => setCopiedCmd(false), 1500);
-                  } catch {
-                    // Clipboard is unavailable; the command is on screen to select by hand.
-                  }
-                }}
-              >
-                {copiedCmd ? 'Copied' : 'Copy command'}
-              </button>
-              <span className="font-mono text-xs text-muted">shown once · paste into the box as root</span>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {data.boxes.length === 0 ? (
         <Card>
@@ -233,6 +202,37 @@ export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBox
                   Remove
                 </button>
               </div>
+              {token && token.box === b.name ? (
+        <div role="status" className="mt-4 overflow-hidden rounded-2xl border border-accent/50 bg-panel">
+          <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+            <div className="font-mono text-[13px] text-muted">install {token.box}</div>
+            <button type="button" className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-muted hover:text-fg" onClick={() => setToken(null)}>
+              close
+            </button>
+          </div>
+          <div className="px-5 py-4">
+            <code className="block break-all rounded-[10px] border border-edge bg-raised px-3.5 py-3 font-mono text-[13px] text-fg">{installCommand(token.value)}</code>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className={btnAccent}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(installCommand(token.value));
+                    setCopiedCmd(true);
+                    setTimeout(() => setCopiedCmd(false), 1500);
+                  } catch {
+                    // Clipboard is unavailable; the command is on screen to select by hand.
+                  }
+                }}
+              >
+                {copiedCmd ? 'Copied' : 'Copy command'}
+              </button>
+              <span className="font-mono text-xs text-muted">shown once · paste into the box as root</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
             </div>
 
             {b.provider_instance_id ? (
