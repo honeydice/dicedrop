@@ -135,6 +135,19 @@ export async function setKeyWebhook(keyId: string, url: string): Promise<Result>
   }
 }
 
+/** The webhook signing secret for one key, for the operator to copy into the receiving app. */
+export async function getSigningSecret(keyId: string): Promise<string | null> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return null;
+    const { data, error } = await ctx.db.rpc('dd_ops_key_signing_secret', { p_key: keyId });
+    if (error) return null;
+    return typeof data === 'string' && data ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function sendTestPulse(keyId: string): Promise<Result> {
   try {
     const ctx = await operatorDb();

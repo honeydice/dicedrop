@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { createClientRecord, createKey, getPulseLog, resendPulse, revokeKey, sendTestPulse, setClientStatus, setKeyWebhook, type PulseLine, type Result } from '@/app/(console)/actions';
+import { createClientRecord, createKey, getPulseLog, getSigningSecret, resendPulse, revokeKey, sendTestPulse, setClientStatus, setKeyWebhook, type PulseLine, type Result } from '@/app/(console)/actions';
 import { money, timeAgo } from '@/lib/format';
 import type { OpsClient } from '@/lib/types';
 import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
@@ -25,6 +25,7 @@ export function ClientsView({ initial, initialError, baseUrl }: { initial: OpsCl
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [hookFor, setHookFor] = useState('');
   const [hookUrl, setHookUrl] = useState('');
+  const [shown, setShown] = useState<{ id: string; secret: string; copied: boolean } | null>(null);
   const [pulses, setPulses] = useState<{ id: string; lines: PulseLine[] | null } | null>(null);
 
   const loadPulses = async (clientId: string) => {
@@ -248,6 +249,18 @@ const { order } = await res.json();   // order.id, order.status
                       >
                         {k.webhook_url ? 'Webhook' : 'Add webhook'}
                       </button>
+                      <button
+                        type="button"
+                        className={btn}
+                        onClick={async () => {
+                          if (shown?.id === k.id) return setShown(null);
+                          const secret = await getSigningSecret(k.id);
+                          if (secret) setShown({ id: k.id, secret, copied: false });
+                          else setError('The signing secret could not be loaded. Try again.');
+                        }}
+                      >
+                        {shown?.id === k.id ? 'Hide secret' : 'Signing secret'}
+                      </button>
                       {k.webhook_url ? (
                         <button
                           type="button"
@@ -269,6 +282,26 @@ const { order } = await res.json();   // order.id, order.status
                       </button>
                     </div>
                   )}
+                  {shown?.id === k.id ? (
+                    <div className="flex w-full flex-wrap items-center gap-3 rounded-md bg-raised px-3 py-2">
+                      <span className="text-xs uppercase tracking-wider text-muted">Webhook signing secret</span>
+                      <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-soft">{shown.secret}</code>
+                      <button
+                        type="button"
+                        className={btnAccent}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(shown.secret);
+                            setShown({ ...shown, copied: true });
+                          } catch {
+                            setError('Copy did not work. Select the text and copy it by hand.');
+                          }
+                        }}
+                      >
+                        {shown.copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  ) : null}
                   {hookFor === k.id ? (
                     <form
                       className="flex w-full flex-wrap items-end gap-3"
