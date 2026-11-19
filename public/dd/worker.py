@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -85,15 +85,24 @@ def kameleo_state():
 
 def ensure_playwright():
     """Playwright is only the remote control for Kameleo's browser. Install it once, next to the worker."""
+    import importlib
+
+    os.makedirs(LIB, exist_ok=True)
     if LIB not in sys.path:
         sys.path.insert(0, LIB)
+    # Python remembers folders it has already looked in. Clear that so a fresh install is seen right away.
+    sys.path_importer_cache.pop(LIB, None)
+    importlib.invalidate_caches()
     try:
-        import playwright  # noqa: F401
+        import playwright.sync_api  # noqa: F401
         return
     except ImportError:
         pass
     log("installing the browser remote control (one time, about a minute)")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--target", LIB, "playwright"])
+    sys.path_importer_cache.pop(LIB, None)
+    importlib.invalidate_caches()
+    import playwright.sync_api  # noqa: F401
 
 
 def direct_ip():
