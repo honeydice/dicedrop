@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.16.1"
+VERSION = "0.17.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1082,7 +1082,14 @@ def verify_payment(page, label):
     Returns a short note of what happened. Card details are never written to the log or sent anywhere but Amazon."""
     seen = []
     target, layout = None, None
+    # Amazon often passes through this address for a second on its way to the confirmation page.
+    for _ in range(4):
+        time.sleep(1)
+        if "/cpe/" not in page.url.lower():
+            return ""
     for _ in range(30):
+        if "/cpe/" not in page.url.lower():
+            return ""
         for frame in page.frames:
             try:
                 found = frame.evaluate(FRAME_FIELDS_JS)
@@ -1267,6 +1274,12 @@ def place_order(page, label=""):
 
     if on_confirmation:
         settle(page)
+        try:
+            import re
+            said = re.search(r"((?:Arriving|Delivery|Estimated delivery|Delivering)\s*:?\s*[A-Z][a-z]+\.?,?\s+[A-Za-z]{3,9}\.?\s+\d{1,2}(?:\s*-\s*(?:[A-Za-z]{3,9}\.?\s+)?\d{1,2})?)", page_words(page, 3000))
+            current_job["thankyou_estimate"] = " ".join(said.group(1).split())[:90] if said else ""
+        except Exception:
+            current_job["thankyou_estimate"] = ""
         found = order_numbers(page)
         if expected and (expected in found or not found):
             order_id = expected if expected in found else ""
@@ -1362,7 +1375,28 @@ def capture_tracking(page, order_id):
                     break
             time.sleep(6)  # a brand-new order can take a moment to show up
         if not opened:
-            return estimate
+            # A brand-new order often has no Track package button yet: use the order's own page instead.
+            log("tracking card: Track package not offered yet for " + str(order_id) + " (order shown in the list: " + str(card is not None) + "); using the order page")
+            if order_id:
+                page.goto(ORDER_DETAILS + order_id, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+                try:
+                    if click_text(page, ["Track package", "Track Package"]):
+                        opened = True
+                except Exception:
+                    opened = False
+            if not opened:
+                import re
+                words = page_words(page, 5000)
+                found = re.search(r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery):?\s+(?:today|tomorrow|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))", words)
+                if found and not estimate:
+                    estimate = " ".join(found.group(1).split())[:90]
+                try:
+                    page.evaluate("window.scrollTo(0, 0)")
+                    current_job["shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
+                except Exception:
+                    pass
+                return estimate
         settle(page)
         for _ in range(20):
             try:
@@ -1634,6 +1668,7 @@ def cart_only_job(job):
         current_job["duplicate_confirmed"] = False
         current_job["recorded_done"] = False
         current_job["placed_id"] = ""
+        current_job["thankyou_estimate"] = ""
         current_job["shot"] = ""
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
@@ -1710,9 +1745,17 @@ def cart_only_job(job):
                 current_job["recorded_done"] = True
                 current_job["placed_id"] = order_id
                 stage[0] = "capturing the tracking card"
-                estimate = capture_tracking(page, order_id)
+                estimate = capture_tracking(page, order_id) or current_job.get("thankyou_estimate", "")
+                log("after ordering: estimate '" + str(estimate) + "', picture " + ("taken" if current_job.get("shot") else "missing"))
                 if current_job.get("shot"):
                     progress(note="ordered · " + (order_id or "") + (" · expected " + estimate if estimate else ""), screenshot=current_job["shot"])
+                if estimate or current_job.get("shot"):
+                    # The same report the regular order check sends: saves the delivery window and the "ordered" proof.
+                    try:
+                        call("/api/worker/v1/orders/" + str(job.get("id")) + "/check",
+                             {"state": "ordered", "delivery_estimate": estimate, "note": estimate, "tracking_number": "", "carrier": "", "screenshot": current_job.get("shot", "")})
+                    except Exception as failure:
+                        log("could not save the ordered proof: " + str(failure)[:200])
             return totals
 
         real = job.get("run_kind") == "place_order"
