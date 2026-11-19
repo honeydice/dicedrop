@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.8"
+VERSION = "0.9.9"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -338,6 +338,25 @@ def look(page):
     except Exception as failure:
         found = "could not inspect: " + str(failure)[:80]
     return " | inspection: " + found + " | events: " + ("; ".join(page_events) if page_events else "none")
+
+
+FIELDS_JS = """() => {
+  const shown = (e) => e.offsetParent !== null;
+  const fields = [...document.querySelectorAll('input:not([type=hidden]),select,textarea')].filter(shown).slice(0, 22)
+    .map((e) => e.tagName.toLowerCase() + '#' + e.id + '(' + (e.name || '').slice(0, 45) + ')');
+  const buttons = [...document.querySelectorAll('input[type=submit],button,[role=button],a.a-button-text')].filter(shown).slice(0, 10)
+    .map((e) => '#' + e.id + ' ' + (e.innerText || e.value || e.getAttribute('aria-labelledby') || '').trim().slice(0, 30));
+  return { at: location.pathname.slice(0, 70), title: document.title.slice(0, 60), fields, buttons };
+}"""
+
+
+def describe(page, words=160):
+    """What the page is, in a form that can be fixed from: where it is, what it says, and which fields and buttons it shows."""
+    try:
+        found = json.dumps(page.evaluate(FIELDS_JS))[:1300]
+    except Exception as failure:
+        found = "could not inspect: " + str(failure)[:80]
+    return " The page says: " + page_words(page, words) + " | inspection: " + found
 
 
 def page_words(page, limit=220):
@@ -678,7 +697,7 @@ def add_address(page, label, secrets, ship):
         settle(page)
     prefix = "#address-ui-widgets-enterAddress"
     if not fill_field(page, prefix + "FullName", ship["name"]):
-        raise Stop("Amazon's add-address form did not load as expected.")
+        raise Stop("Amazon's add-address form did not load as expected." + describe(page))
     fill_field(page, prefix + "PhoneNumber", ship.get("phone") or "5125550100")
     fill_field(page, prefix + "Line1", ship["line1"])
     pause(0.5, 1.0)
@@ -703,7 +722,7 @@ def add_address(page, label, secrets, ship):
             option.click()
             picked = True
     if not picked:
-        raise Stop("Could not choose the state on Amazon's address form.")
+        raise Stop("Could not choose the state on Amazon's address form." + describe(page))
     fill_field(page, prefix + "PostalCode", ship["postal_code"])
     # Make it the default so checkout ships to the buyer without another choice.
     for selector in ["#address-ui-widgets-use-as-my-default", "input[name='address-ui-widgets-use-as-my-default']"]:
@@ -715,7 +734,7 @@ def add_address(page, label, secrets, ship):
             continue
     pause()
     if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']"]):
-        raise Stop("Could not find the save button on Amazon's address form.")
+        raise Stop("Could not find the save button on Amazon's address form." + describe(page))
     settle(page)
     # Amazon may suggest a corrected address. Keep what the buyer gave.
     safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"])
@@ -792,7 +811,7 @@ def cart_only_job(job):
             page.goto(CART_PAGE, wait_until="domcontentloaded", timeout=90000)
             settle(page)
             if not safe_click(page, ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input"]):
-                raise Stop("The cart is empty or the checkout button is missing.")
+                raise Stop("The cart is empty or the checkout button is missing." + describe(page))
             settle(page)
             pass_sign_in_wall(page, label, secrets)
             settle(page)
