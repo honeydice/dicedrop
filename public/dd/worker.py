@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -194,6 +194,31 @@ def human_type(page, selector, text):
     field.fill("")
     field.press_sequentially(text, delay=random.randint(70, 150))
     pause(0.3, 0.9)
+    return field
+
+
+def typed_length(field):
+    try:
+        return len(field.input_value(timeout=2000))
+    except Exception:
+        return -1
+
+
+def submit(page, field, buttons):
+    """Submit the way a person does: press Enter in the field. If the page has not moved on, click the button too."""
+    before = page.url
+    try:
+        field.press("Enter")
+    except Exception:
+        pass
+    pause(1.5, 2.5)
+    try:
+        still_here = page.url == before and field.is_visible()
+    except Exception:
+        still_here = False
+    if still_here and click_first(page, buttons):
+        return "enter+button"
+    return "enter"
 
 
 def click_first(page, selectors):
@@ -259,27 +284,26 @@ def amazon_sign_in(page, label, secrets):
                 time.sleep(int(code.get("expires_in", 5)) + 1)
                 code = call("/api/worker/v1/totp", {"account": label})
             report(label, note="entering the two-step code")
-            steps.append("code")
-            human_type(page, OTP, code["code"])
             if visible(page, "#auth-mfa-remember-device"):
                 try:
                     page.locator("#auth-mfa-remember-device").first.check()
                 except Exception:
                     pass
-            click_first(page, ["#auth-signin-button", "input[type='submit']"])
+            field = human_type(page, OTP, code["code"])
+            steps.append("code:" + submit(page, field, ["#auth-signin-button", "input[type='submit']", "button[type='submit']"]))
             entered_code = True
         elif visible(page, PASSWORD):
             report(label, note="entering the password")
-            steps.append("password")
-            if steps.count("password") > 2:
-                return "needs_sign_in", "Amazon did not accept the password. The page says: " + page_words(page)
-            human_type(page, PASSWORD, secrets["password"])
+            if len([step for step in steps if step.startswith("password")]) >= 2:
+                return "needs_sign_in", "Amazon stayed on the password page (" + ", ".join(steps) + "). The page says: " + page_words(page)
             if visible(page, "input[name='rememberMe']"):
                 try:
                     page.locator("input[name='rememberMe']").first.check()
                 except Exception:
                     pass
-            click_first(page, ["#signInSubmit", "input[type='submit']"])
+            field = human_type(page, PASSWORD, secrets["password"])
+            typed = typed_length(field)
+            steps.append("password typed " + str(typed) + " of " + str(len(secrets["password"])) + " characters, sent by " + submit(page, field, ["#signInSubmit", "input[type='submit']", "button[type='submit']"]))
             entered_password = True
         elif visible(page, EMAIL):
             report(label, note="entering the email")
