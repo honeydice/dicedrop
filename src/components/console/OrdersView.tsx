@@ -71,6 +71,20 @@ const EMPTY: OpsOrders = {
 };
 
 /** Amazon words its estimate as "Arriving December 10 - December 21". Keep just the date part. */
+/** "eIS C/O Daniela Fernandez Cuellar" -> "Daniela Fernandez Cuellar"; long names keep first and last. */
+function shortName(name: string): string {
+  const clean = name.replace(/^.*\bC\/O\s+/i, '').replace(/\s+/g, ' ').trim();
+  const parts = clean.split(' ');
+  const short = parts.length > 2 ? `${parts[0]} ${parts[parts.length - 1]}` : clean;
+  return short.replace(/\b([A-Za-z])([A-Za-z']*)/g, (_, a: string, b: string) => a.toUpperCase() + b.toLowerCase());
+}
+
+/** The first part of a listing title: up to the first separator, at most 48 characters. */
+function shortTitle(title: string): string {
+  const head = title.split(/\s[|–—-]\s|\s-(?=\S)|[|,]/)[0].trim() || title;
+  return head.length > 48 ? `${head.slice(0, 47).trimEnd()}…` : head;
+}
+
 function expected(estimate: string): string {
   return estimate.replace(/^(Arriving|Now expected|Expected|Delivery estimate)\s*(by\s+)?:?\s*/i, '').trim() || estimate;
 }
@@ -328,7 +342,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
           const total = o.buy_cost ?? o.checkout?.total ?? null;
           const note =
             ['ordered', 'shipped'].includes(o.status) && (o.checkout?.delivery_estimate || o.tracking_number)
-              ? [o.status === 'shipped' ? [o.carrier, o.tracking_number].filter(Boolean).join(' ') : '', o.checkout?.delivery_estimate ? `expected ${expected(o.checkout.delivery_estimate)}` : '']
+              ? [o.status === 'shipped' ? [o.carrier, o.tracking_number].filter(Boolean).join(' ') : '', o.checkout?.delivery_estimate ? `Expected ${expected(o.checkout.delivery_estimate)}` : '']
                   .filter(Boolean)
                   .join(' · ')
               : o.status === 'issue'
@@ -350,18 +364,24 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
                 <span className="w-[150px] shrink-0 truncate text-fg">{o.order_number}</span>
                 <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
-                <span className="min-w-0 flex-1 truncate text-muted">
-                  <span className="text-soft">{o.ship_name ?? o.buyer_name ?? ''}</span>
-                  {o.ship_name || o.buyer_name ? ' · ' : ''}
-                  {o.title ?? o.asin ?? 'Untitled item'}
+                <span className="hidden w-[150px] shrink-0 truncate text-soft sm:block" title={o.ship_name ?? o.buyer_name ?? ''}>
+                  {shortName(o.ship_name ?? o.buyer_name ?? '')}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-muted" title={o.title ?? o.asin ?? ''}>
+                  {shortTitle(o.title ?? o.asin ?? 'Untitled item')}
                   {o.quantity > 1 ? ` ×${o.quantity}` : ''}
-                  {note ? (
-                    <span className="ml-2" style={{ color: o.status === 'issue' ? '#ef4444' : look.fg }}>
-                      · {note}
-                    </span>
-                  ) : null}
                   {o.stuck ? <span className="ml-2 text-warn">· stuck</span> : null}
                   {o.cancel_requested ? <span className="ml-2 text-warn">· cancel requested</span> : null}
+                </span>
+                <span className="hidden w-[250px] shrink-0 truncate md:block" title={note}>
+                  {note ? (
+                    <span
+                      className="inline-block max-w-full truncate rounded px-2 py-[3px] align-middle text-[11px] font-semibold"
+                      style={o.status === 'issue' ? { background: '#dc2626', color: '#ffffff' } : { background: look.bg, color: look.fg, border: `1px solid ${look.fg}` }}
+                    >
+                      {note}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="hidden shrink-0 text-right text-muted lg:block">
                   cogs <span className="text-fg">{money(cogs)}</span> · fees <span className="text-fg">{money(fees)}</span>
