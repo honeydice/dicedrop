@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -237,21 +237,37 @@ def type_checked(page, selector, text):
     return field, "not accepted by the field"
 
 
+def moved_on(page, field, before, seconds):
+    """Waits for the page to react to a submit: a new address, the field going away, or an Amazon message appearing."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            if page.url != before:
+                return True
+            if not field.is_visible():
+                return True
+            if first_visible(page, ERROR_BOX) is not None or first_visible(page, CAPTCHA) is not None:
+                return True
+        except Exception:
+            return True  # the page is navigating
+        time.sleep(0.5)
+    return False
+
+
 def submit(page, field, buttons):
-    """Submit the way a person does: press Enter in the field. If the page has not moved on, click the button too."""
+    """Submit once, the way a person does: press Enter and wait for Amazon to answer.
+    Only if nothing at all happens is the button clicked. Sending the form twice makes Amazon discard it."""
     before = page.url
     try:
         field.press("Enter")
     except Exception:
         pass
-    pause(1.5, 2.5)
-    try:
-        still_here = page.url == before and field.is_visible()
-    except Exception:
-        still_here = False
-    if still_here and click_first(page, buttons):
-        return "enter+button"
-    return "enter"
+    if moved_on(page, field, before, 25):
+        return "enter"
+    if click_first(page, buttons):
+        moved_on(page, field, before, 25)
+        return "enter, then button after 25s of nothing"
+    return "enter (no reaction)"
 
 
 def click_first(page, selectors):
