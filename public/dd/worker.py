@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.10.1"
+VERSION = "0.10.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -734,21 +734,60 @@ def fill_by(page, selectors, label_text, value, required=True):
 
 
 def delivery_change_link(page):
-    """The "Change" link that belongs to the delivery address, never the one next to the payment method."""
-    for selector in ["#addressChangeLinkId", "a[data-testid='Address_selectChangeAddress']", "[data-testid*='address' i] a:has-text('Change')"]:
+    """The "Change" link that belongs to the delivery address, never the one next to the payment method.
+    Found by position: it is the "Change" sitting level with the "Delivering to ..." heading."""
+    for selector in ["#addressChangeLinkId", "a[data-testid='Address_selectChangeAddress']"]:
         target = first_visible(page, selector)
         if target is not None:
             return target
     try:
-        heading = page.get_by_text("Delivering to", exact=False).first
-        if heading.is_visible():
-            panel = heading.locator("xpath=ancestor::div[.//a[normalize-space()='Change']][1]")
-            link = panel.locator("a", has_text="Change").first
-            if link.is_visible():
-                return link
+        heading = None
+        for words in ["Delivering to", "Shipping to", "Deliver to"]:
+            matches = page.get_by_text(words, exact=False)
+            for index in range(min(matches.count(), 6)):
+                if matches.nth(index).is_visible():
+                    heading = matches.nth(index)
+                    break
+            if heading is not None:
+                break
+        if heading is None:
+            return None
+        anchor = heading.bounding_box()
+        if not anchor:
+            return None
+        best, best_gap = None, 9999
+        links = page.get_by_text("Change", exact=True)
+        for index in range(min(links.count(), 12)):
+            link = links.nth(index)
+            if not link.is_visible():
+                continue
+            box = link.bounding_box()
+            if not box:
+                continue
+            gap = abs((box["y"] + box["height"] / 2) - (anchor["y"] + anchor["height"] / 2))
+            if gap < best_gap:
+                best, best_gap = link, gap
+        if best is not None and best_gap <= 120:
+            return best
     except Exception:
         pass
     return None
+
+
+def wait_for_checkout(page, seconds=30):
+    """The checkout page fills in its delivery section a moment after it opens. Wait for it."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if (delivery_change_link(page) is not None or visible(page, "#add-new-address-popover-link")
+                or visible(page, "#address-ui-widgets-enterAddressFullName")):
+            return True
+        try:
+            if page.get_by_text("Add a new delivery address", exact=False).first.is_visible():
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
 
 
 def add_address_at_checkout(page, ship):
@@ -909,7 +948,7 @@ def cart_only_job(job):
             settle(page)
             # Amazon sometimes puts a page in between the cart and checkout. Step through up to four of them.
             for _ in range(4):
-                if delivery_change_link(page) is not None or visible(page, "#add-new-address-popover-link") or visible(page, "#address-ui-widgets-enterAddressFullName"):
+                if "/checkout/p/" in page.url or wait_for_checkout(page, 4):
                     break
                 if click_text(page, ["Continue to checkout", "Continue to Checkout"]):
                     progress(note="continuing to checkout")
@@ -920,6 +959,8 @@ def cart_only_job(job):
                     settle(page)
                 else:
                     break
+            stage[0] = "waiting for the checkout page"
+            wait_for_checkout(page)
             stage[0] = "adding the buyer's address at checkout"
             progress(note="adding the buyer's address")
             add_address_at_checkout(page, ship)
