@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.17.4"
+VERSION = "0.17.5"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1226,9 +1226,11 @@ def place_order(page, label=""):
             fresh = order_numbers(history) - known
         except Exception:
             return ""
+        # The number in the checkout address is Amazon's purchase id, not the order number: never use it.
+        fresh.discard(expected)
         if not fresh:
             return ""
-        return expected if expected in fresh else sorted(fresh)[0]
+        return sorted(fresh)[0]
 
     order_id = ""
     on_confirmation = False
@@ -1280,14 +1282,19 @@ def place_order(page, label=""):
             current_job["thankyou_estimate"] = " ".join(said.group(1).split())[:90] if said else ""
         except Exception:
             current_job["thankyou_estimate"] = ""
-        found = order_numbers(page)
-        if expected and (expected in found or not found):
-            order_id = expected if expected in found else ""
-        if not order_id and found:
-            order_id = sorted(found)[0]
+        # The real order number is the new one in Your Orders. The confirmation page's address carries the
+        # purchase id (it looks like an order number and is not one), so that is left out.
+        for _ in range(36):
+            order_id = new_in_history()
+            if order_id:
+                break
+            time.sleep(5)
         if not order_id:
-            time.sleep(4)
-            order_id = new_in_history() or expected
+            shown = order_numbers(page) - known - {expected}
+            if len(shown) == 1:
+                order_id = sorted(shown)[0]
+        if not order_id:
+            log("order placed, but its number is not in Your Orders yet; purchase id " + str(expected))
     elif not order_id:
         time.sleep(5)
         order_id = new_in_history()
@@ -1546,6 +1553,7 @@ def open_order(page, number, tries=2, wait=6.0):
                     if order_card(page, number) is not None:
                         return "list", card_words
             else:
+                log("order " + number + " is not in the list; orders listed: " + ", ".join(sorted(order_numbers(page)))[:200])
                 # Not on the first page of Your Orders (older order), or too new to be listed: its own address.
                 page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
                 settle(page)
@@ -1657,6 +1665,7 @@ def tracking_job(job):
             call("/api/worker/v1/accounts/checked", {"account": label, "error": problem})
         except Exception as failure:
             log("could not record the order check: " + str(failure)[:200])
+        ship_log("job", "order check " + label)
         current_job["text"] = ""
         job_lock.release()
 
