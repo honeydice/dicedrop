@@ -16,7 +16,19 @@ function needsAttention(a: OpsAccount): boolean {
 }
 
 function isReady(a: OpsAccount): boolean {
-  return (a.status === 'active' || a.status === 'warming') && (a.session_state === 'signed_in' || a.session_state === 'unknown') && a.box_online === true;
+  return (a.status === 'active' || a.status === 'warming') && a.session_state === 'signed_in' && a.box_online === true;
+}
+
+/** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
+function signIn(a: OpsAccount): { text: string; color: string } {
+  if (a.status === 'paused') return { text: 'paused', color: TONE.muted };
+  if (a.status === 'locked' || a.session_state === 'locked') return { text: 'locked', color: TONE.bad };
+  if (a.session_state === 'verification') return { text: 'needs verification', color: TONE.warn };
+  if (a.session_state === 'needs_sign_in') return { text: 'sign-in needed', color: TONE.warn };
+  if (!a.box_id) return { text: 'no vps', color: TONE.muted };
+  if (a.box_online !== true) return { text: 'vps offline', color: TONE.bad };
+  if (a.session_state === 'signed_in') return { text: 'signed in', color: TONE.good };
+  return { text: 'not signed in yet', color: TONE.muted };
 }
 
 function tone(a: OpsAccount): string {
@@ -170,7 +182,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       ) : null}
 
       <section aria-label="Account health" className="mb-5 flex flex-wrap gap-3">
-        <Tile label="Ready" value={`${counts.ready} / ${counts.all}`} tone={counts.ready > 0 ? 'good' : undefined} hint="signed in on an online box" />
+        <Tile label="Ready" value={`${counts.ready} / ${counts.all}`} tone={counts.ready > 0 ? 'good' : undefined} hint="signed in to Amazon on an online box" />
         <Tile label="Need attention" value={String(counts.attention)} tone={counts.attention > 0 ? 'warn' : undefined} hint="sign-in, verification, or locked" />
         <Tile label="Orders today" value={`${ordersToday} / ${capacity}`} hint="placed against total daily capacity" />
       </section>
@@ -195,7 +207,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       <Card title={`GET /accounts${folder ? `/${folder}` : ''}${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{folder ? rows.length : data.accounts.length}</Badge>}>
         {suppliers.map((s) => {
           const inFolder = data.accounts.filter((a) => (a.supplier || 'amazon') === s);
-          const online = inFolder.filter((a) => a.box_online === true && a.status !== 'paused').length;
+          const online = inFolder.filter(isReady).length;
           const isFolderOpen = folder === s;
           return (
             <div key={s} className="border-b border-divider last:border-b-0">
@@ -203,14 +215,14 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                 type="button"
                 aria-expanded={isFolderOpen}
                 onClick={() => setFolder(isFolderOpen ? '' : s)}
-                className="flex min-h-[52px] w-full items-center gap-3.5 bg-transparent px-5 text-left hover:bg-raised/60"
+                className="flex min-h-[44px] w-full items-center gap-3 bg-transparent px-5 text-left hover:bg-raised/60"
               >
                 <span aria-hidden="true" className="w-3 font-mono text-[13px] text-muted">
                   {isFolderOpen ? '▾' : '▸'}
                 </span>
-                <span className="font-mono text-[15px] text-fg">{s}/</span>
-                <span className="font-mono text-[13px] text-muted">
-                  {inFolder.length} account{inFolder.length === 1 ? '' : 's'} · {online} connected
+                <span className="font-mono text-[13px] font-medium text-fg">{s}/</span>
+                <span className="font-mono text-xs text-muted">
+                  {inFolder.length} account{inFolder.length === 1 ? '' : 's'} · {online} signed in
                 </span>
               </button>
               {isFolderOpen ? (
@@ -218,33 +230,33 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
         {shown.map((a) => {
           const isOpen = open === a.id;
           const full = Number(a.orders_today) >= Number(a.daily_order_cap);
-          const connected = a.box_online === true && a.status !== 'paused' && !needsAttention(a);
+          const st = signIn(a);
           return (
             <div key={a.id} className="border-b border-divider last:border-b-0">
-              <div className="flex items-center">
+              <div className="flex items-center gap-2 pr-4">
                 <button
                   type="button"
                   aria-expanded={isOpen}
                   onClick={() => setOpen(isOpen ? '' : a.id)}
-                  className="flex min-w-0 flex-1 flex-wrap items-center gap-x-8 gap-y-1 bg-transparent px-6 py-4 text-left hover:bg-raised/60"
+                  className="flex min-h-[48px] min-w-0 flex-1 items-center gap-6 bg-transparent py-2 pl-12 pr-2 text-left hover:bg-raised/60"
                 >
-                  <span className="flex min-w-[220px] items-center gap-3.5">
-                    <Dot color={connected ? TONE.good : TONE.bad} />
-                    <span className="font-mono text-[16px] text-fg">{a.label}</span>
-                    <span className="font-mono text-[13px]" style={{ color: connected ? TONE.good : TONE.bad }}>
-                      {a.status === 'paused' ? 'paused' : a.status === 'locked' ? 'locked' : connected ? 'connected' : 'not connected'}
+                  <span className="flex w-[240px] shrink-0 items-center gap-3">
+                    <Dot color={st.color} />
+                    <span className="font-mono text-[13px] font-medium text-fg">{a.label}</span>
+                    <span className="font-mono text-xs" style={{ color: st.color }}>
+                      {st.text}
                     </span>
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
-                    {[a.login_email, a.box_name ?? 'no VPS', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'].filter(Boolean).join('  ·  ')}
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
+                    {[a.login_email, a.box_name ?? 'no vps', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'].filter(Boolean).join('  ·  ')}
                     {a.last_error ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
-                    {a.current_order ? <span className="ml-3 font-mono">placing {a.current_order}</span> : null}
+                    {a.current_order ? <span className="ml-3">placing {a.current_order}</span> : null}
                   </span>
-                  <span className="shrink-0 font-mono text-[13px]" style={{ color: full ? TONE.warn : undefined }}>
+                  <span className="shrink-0 font-mono text-xs" style={{ color: full ? TONE.warn : 'rgb(var(--muted))' }}>
                     {a.orders_today} / {a.daily_order_cap} today
                   </span>
                 </button>
-                <div className="flex w-[230px] shrink-0 items-center justify-end gap-2 pr-5">
+                <div className="flex w-[150px] shrink-0 items-center justify-end gap-1.5">
                   {a.totp_enabled ? (
                     <>
                       <button
@@ -252,23 +264,25 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         onClick={() => void copyCode(a)}
                         aria-label={`Copy the two-step code for ${a.label}`}
                         title="Click to copy"
-                        className="min-h-[44px] bg-transparent px-2 text-right font-mono"
+                        className="relative h-8 overflow-hidden rounded-md border border-edge bg-raised px-2.5 font-mono text-[13px] tracking-[0.08em] text-fg hover:border-accent"
                       >
-                        <span className="block text-[20px] tracking-[0.14em] text-fg">{a.totp_code ? `${a.totp_code.slice(0, 3)} ${a.totp_code.slice(3)}` : '--- ---'}</span>
-                        <span className="mt-1 block h-[3px] w-full overflow-hidden rounded-full bg-chip">
-                          <span className="block h-full rounded-full transition-[width] duration-1000 ease-linear" style={{ width: `${(left / 30) * 100}%`, background: left <= 5 ? TONE.warn : TONE.good }} />
-                        </span>
-                        <span className="mt-0.5 block text-[11px]" style={{ color: left <= 5 ? TONE.warn : TONE.muted }}>
-                          {copied === a.id ? 'copied' : `live · ${left}s`}
-                        </span>
+                        {copied === a.id ? 'copied' : a.totp_code ? `${a.totp_code.slice(0, 3)} ${a.totp_code.slice(3)}` : '--- ---'}
+                        <span
+                          aria-hidden="true"
+                          className="absolute bottom-0 left-0 h-[2px] transition-[width] duration-1000 ease-linear"
+                          style={{ width: `${(left / 30) * 100}%`, background: left <= 5 ? TONE.warn : TONE.good }}
+                        />
                       </button>
+                      <span className="w-6 text-right font-mono text-[11px]" style={{ color: left <= 5 ? TONE.warn : 'rgb(var(--muted))' }}>
+                        {left}s
+                      </span>
                       <button
                         type="button"
                         aria-label="Refresh the code"
                         title="Refresh"
                         disabled={syncing}
                         onClick={() => void syncNow()}
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-edge bg-raised text-[18px] text-fg disabled:opacity-40"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-edge bg-raised text-[13px] text-muted hover:text-fg disabled:opacity-40"
                       >
                         <span aria-hidden="true" className={syncing ? 'animate-spin' : ''}>
                           ↻
@@ -276,8 +290,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                       </button>
                     </>
                   ) : (
-                    <button type="button" className={btn} onClick={() => setEditId(a.id)}>
-                      Add code key
+                    <button type="button" className="h-8 rounded-md border border-edge bg-raised px-2.5 font-mono text-xs text-muted hover:text-fg" onClick={() => setEditId(a.id)}>
+                      add code key
                     </button>
                   )}
                 </div>
