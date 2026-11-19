@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1027,6 +1027,120 @@ def add_gift(page, gift):
     return "gift added" + ("" if sender is not None or not who else " (sender written into the message)")
 
 
+FRAME_FIELDS_JS = """() => {
+  const shown = (e) => e.offsetParent !== null || e.getClientRects().length > 0;
+  const key = (e) => [e.id, e.name, e.getAttribute('autocomplete'), e.getAttribute('placeholder'), e.getAttribute('aria-label'),
+    (e.labels && e.labels[0] ? e.labels[0].innerText : '')].filter(Boolean).join(' | ').slice(0, 120);
+  return {
+    fields: [...document.querySelectorAll('input:not([type=hidden]),select')].filter(shown).slice(0, 14).map((e, i) => ({ i, tag: e.tagName.toLowerCase(), type: e.type || '', key: key(e) })),
+    buttons: [...document.querySelectorAll('button,input[type=submit],[role=button],a.a-button-text')].filter(shown).slice(0, 10).map((e) => (e.innerText || e.value || e.getAttribute('aria-label') || '').trim().slice(0, 30)),
+    says: (document.body ? document.body.innerText : '').replace(/\\s+/g, ' ').trim().slice(0, 260),
+  };
+}"""
+
+CARD_KEYS = {
+    "number": ["cardnumber", "card-number", "card number", "cc-number", "ccnumber", "creditcardnumber", "card_number"],
+    "cvv": ["cvv", "cvc", "csc", "security code", "securitycode", "security-code", "card verification"],
+    "exp": ["expir", "exp-date", "expdate", "mm/yy", "mm / yy", "cc-exp"],
+    "month": ["expmonth", "exp-month", "exp_month", "cc-exp-month", "month"],
+    "year": ["expyear", "exp-year", "exp_year", "cc-exp-year", "year"],
+    "name": ["name on card", "cardholder", "cc-name", "accountholdername", "card holder"],
+    "zip": ["zip", "postal"],
+}
+
+
+def verify_payment(page, label):
+    """Amazon's "Verify payment" page asks to confirm the card. Look through the page and its frames for the
+    fields it shows, fill the ones this account has saved card details for, and submit once.
+    Returns a short note of what happened. Card details are never written to the log or sent anywhere but Amazon."""
+    seen = []
+    target, layout = None, None
+    for _ in range(30):
+        for frame in page.frames:
+            try:
+                found = frame.evaluate(FRAME_FIELDS_JS)
+            except Exception:
+                continue
+            if found.get("fields"):
+                target, layout = frame, found
+                break
+        if target is not None:
+            break
+        time.sleep(1)
+    try:
+        for frame in page.frames:
+            try:
+                found = frame.evaluate(FRAME_FIELDS_JS)
+                seen.append({"frame": frame.url.split("?")[0][-60:], "fields": [f["tag"] + ":" + f["type"] + " " + f["key"] for f in found.get("fields", [])], "buttons": found.get("buttons", []), "says": found.get("says", "")[:200]})
+            except Exception:
+                continue
+    except Exception:
+        pass
+    current_job["verify_seen"] = json.dumps(seen)[:1800]
+    if target is None:
+        return "Amazon asked to verify the payment, but showed no fields to fill in (it may want an approval from the bank or card app)"
+
+    card = call("/api/worker/v1/accounts/card", {"account": label})
+    if not card.get("saved"):
+        return "Amazon asked to verify the card, and this account has no card details saved"
+
+    month, year = str(card.get("exp_month", "")), str(card.get("exp_year", ""))
+    values = {"number": card.get("number", ""), "cvv": card.get("cvv", ""), "exp": month + "/" + year[-2:], "month": month, "year": year,
+              "name": card.get("name") or "", "zip": card.get("zip") or ""}
+    filled, last = [], None
+    inputs = target.locator("input:not([type=hidden]), select")
+    for field in layout["fields"]:
+        described = field["key"].lower()
+        kind = ""
+        for name in ["number", "cvv", "month", "year", "exp", "name", "zip"]:
+            if any(word in described for word in CARD_KEYS[name]):
+                kind = name
+                break
+        if not kind or not values.get(kind) or kind in filled:
+            continue
+        try:
+            visible_inputs = [inputs.nth(i) for i in range(min(inputs.count(), 40)) if inputs.nth(i).is_visible()]
+            element = visible_inputs[field["i"]]
+            if field["tag"] == "select":
+                choice = values[kind]
+                for option in [choice, choice.lstrip("0"), choice[-2:]]:
+                    try:
+                        element.select_option(option)
+                        break
+                    except Exception:
+                        continue
+            else:
+                element.click()
+                pause(0.2, 0.5)
+                element.fill("")
+                element.press_sequentially(values[kind], delay=random.randint(60, 120))
+                last = element
+            filled.append(kind)
+            pause(0.4, 0.9)
+        except Exception:
+            continue
+    if not filled:
+        return "Amazon asked to verify the payment with fields the worker does not recognize yet"
+    pause(0.6, 1.2)
+    sent = False
+    for words in ["Verify", "Continue", "Submit", "Confirm", "Verify card", "Save", "Done"]:
+        try:
+            button = target.get_by_role("button", name=words, exact=True).first
+            if button.is_visible():
+                button.click()
+                sent = True
+                break
+        except Exception:
+            continue
+    if not sent and last is not None:
+        try:
+            last.press("Enter")
+            sent = True
+        except Exception:
+            pass
+    return "payment verified with the saved card (" + ", ".join(filled) + ")" + ("" if sent else ", but no button to send it was found")
+
+
 ORDER_NUMBER = r"\b\d{3}-\d{7}-\d{7}\b"
 
 
@@ -1039,7 +1153,7 @@ def order_numbers(view):
         return set()
 
 
-def place_order(page):
+def place_order(page, label=""):
     """The ONLY place in this worker that buys. It runs only for a "place_order" run.
     It clicks Place your order once (and confirms Amazon's duplicate page once if that appears).
     The order counts as placed as soon as either Amazon's confirmation page shows, or a new order number
@@ -1085,6 +1199,7 @@ def place_order(page):
     order_id = ""
     on_confirmation = False
     confirmed_duplicate = False
+    verify_tried = False
     started = time.time()
     last_look = started
     deadline = started + 240
@@ -1108,6 +1223,17 @@ def place_order(page):
                 confirmed_duplicate = True
                 current_job["duplicate_confirmed"] = True
                 deadline = time.time() + 240
+        if "/cpe/" in address and not verify_tried:
+            # "Verify payment": answer it before doing anything else, or Amazon cancels the order later.
+            verify_tried = True
+            try:
+                current_job["verify_note"] = verify_payment(page, label)
+            except Exception as failure:
+                current_job["verify_note"] = "payment verification could not be completed: " + str(failure)[:120]
+            log("verify payment: " + str(current_job.get("verify_note")))
+            deadline = max(deadline, time.time() + 120)
+            last_look = time.time()  # give Amazon a moment to take the answer before leaving this page
+            continue
         if time.time() - last_look >= 15:
             last_look = time.time()
             order_id = new_in_history()
@@ -1264,9 +1390,25 @@ def order_card(page, amazon_order_id):
     return None
 
 
-def state_from_words(words):
+CANCELLED = r"(?:orders?|items?|shipments?)\s+(?:has|have|was|were)\s+(?:been\s+)?cancell?ed|cancell?ed\s+by|we(?:'ve| have)?\s+cancell?ed|you(?:'ve| have)?\s+cancell?ed|your order was cancell?ed"
+
+
+def cancel_words(words):
+    """The sentence Amazon uses to say an order was cancelled, or "" when the page does not say that.
+    The "Cancelled Orders" tab and "Cancel items" buttons do not count."""
+    import re
+
+    found = re.search(r"[^.!?]{0,70}(?:" + CANCELLED + r")[^.!?]{0,90}[.!?]?", words, re.I)
+    return " ".join(found.group(0).split())[:180] if found else ""
+
+
+def state_from_words(words, short=False):
+    """`short` is for a small piece of text such as one order's card or a status heading, where the single
+    word "Cancelled" is the status. For a whole page, only a full cancellation sentence counts."""
+    import re
+
     low = words.lower()
-    if "cancelled" in low or "canceled" in low:
+    if cancel_words(words) or (short and re.search(r"\bcancell?ed\b(?!\s+orders)", low)):
         return "cancelled"
     if "delivered" in low and "not delivered" not in low and "to be delivered" not in low:
         return "delivered"
@@ -1313,7 +1455,7 @@ def check_order(page, order):
             card_words = ""
 
     opened_track = False
-    if card is not None and state_from_words(card_words) != "cancelled":
+    if card is not None and state_from_words(card_words, short=True) != "cancelled":
         opened_track = click_text_in(card, ["Track package", "Track Package"])
     if opened_track:
         settle(page)
@@ -1329,7 +1471,7 @@ def check_order(page, order):
             time.sleep(0.5)
         pause(1.0, 2.0)
         words = page_words(page, 2500)
-        result["state"] = state_from_words(status or estimate or card_words)
+        result["state"] = state_from_words(status or estimate or card_words, short=True)
         result["delivery_estimate"] = estimate[:90]
         result["note"] = (status or estimate)[:120]
         found = re.search(r"Tracking (?:ID|number|#)\s*:?\s*([A-Z0-9]{8,34})", words, re.I)
@@ -1345,12 +1487,14 @@ def check_order(page, order):
     if card is None or not click_text_in(card, ["View order details", "Order details", "View order"]):
         page.goto(details, wait_until="domcontentloaded", timeout=90000)
     settle(page)
-    words = page_words(page, 2500)
-    result["state"] = state_from_words(card_words + " " + words)
-    for line in re.split(r"(?<=[.!])\s+", words):
-        if result["state"][:6] in line.lower() or (result["state"] == "cancelled" and "cancel" in line.lower()):
-            result["note"] = line.strip()[:160]
-            break
+    words = page_words(page, 6000)
+    from_card = state_from_words(card_words, short=True) if card_words else "ordered"
+    result["state"] = from_card if from_card != "ordered" else state_from_words(words)
+    if result["state"] == "cancelled":
+        result["note"] = ""  # the status itself says it: Cancelled by Amazon
+    else:
+        found = re.search(r"((?:Delivered|Shipped|On the way|Out for delivery)[^.]{0,60})", card_words + " " + words)
+        result["note"] = found.group(1).strip()[:120] if found else ""
     found = re.search(r"((?:Arriving|Now expected|Delivered)[^.]{3,60})", card_words + " " + words)
     if found and result["state"] != "cancelled":
         result["delivery_estimate"] = found.group(1).strip()[:90]
@@ -1504,7 +1648,11 @@ def cart_only_job(job):
                     raise Stop("Could not read the order total at checkout, so the order was not placed." + describe(page))
                 stage[0] = "placing the order"
                 progress(note="placing the order · total $" + format(totals["total"], ".2f"))
-                totals["amazon_order_id"] = place_order(page)
+                totals["amazon_order_id"] = place_order(page, label)
+                if current_job.get("verify_note"):
+                    totals["verify"] = current_job["verify_note"]
+                if current_job.get("verify_seen"):
+                    totals["verify_page"] = current_job["verify_seen"]
                 totals["placed"] = True
                 stage[0] = "capturing the tracking card"
                 progress(note="ordered · capturing the tracking card")
@@ -1520,7 +1668,7 @@ def cart_only_job(job):
         elif totals.get("placed"):
             order_id = totals.pop("amazon_order_id", "") or ""
             totals.pop("placed", None)
-            progress(done=True, placed=True, amazon_order_id=order_id, note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", "")) + (" · duplicate confirmed" if current_job.get("duplicate_confirmed") else ""), screenshot=shot, checkout=totals)
+            progress(done=True, placed=True, amazon_order_id=order_id, note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", "")) + (" · duplicate confirmed" if current_job.get("duplicate_confirmed") else "") + (" · " + str(totals.get("verify")) if totals.get("verify") else ""), screenshot=shot, checkout=totals)
         else:
             progress(done=True, note="cart ready · address added · " + str(totals.get("gift", "gift step skipped")) + " · not ordered", screenshot=shot, checkout=totals)
         log("cart run " + job.get("order_number", "") + " finished" + (": " + error if error else ""))
@@ -1528,6 +1676,8 @@ def cart_only_job(job):
         progress(done=True, error="The cart run could not start: " + str(failure)[:200], note="stopped")
     finally:
         current_job["shot"] = ""
+        current_job["verify_note"] = ""
+        current_job["verify_seen"] = ""
         current_job["whole_page"] = False
         current_job["text"] = ""
         job_lock.release()

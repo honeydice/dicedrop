@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { listProxies, saveAccount, type AccountForm } from '@/app/(console)/actions';
+import { cardStatus, clearCardDetails, listProxies, saveAccount, saveCardDetails, type AccountForm, type CardDetails } from '@/app/(console)/actions';
 import type { OpsAccount, OpsAccounts, OpsProxy } from '@/lib/types';
 import { btn, btnAccent, Dot, ErrorNote, field, label, TONE } from './ui';
 
@@ -58,6 +58,40 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
   const set = (p: Partial<AccountForm>) => setForm((f) => ({ ...f, ...p }));
   const editing = account !== null;
   const [proxies, setProxies] = useState<OpsProxy[] | null>(null);
+  const BLANK_CARD: CardDetails = { number: '', exp_month: '', exp_year: '', cvv: '', name: '', zip: '' };
+  const [card, setCard] = useState<CardDetails>(BLANK_CARD);
+  const [cardSaved, setCardSaved] = useState<{ set: boolean; set_at: string | null }>({ set: false, set_at: null });
+  const [cardNote, setCardNote] = useState('');
+
+  useEffect(() => {
+    if (!account) return;
+    let live = true;
+    void cardStatus(account.id).then((s) => live && setCardSaved(s));
+    return () => {
+      live = false;
+    };
+  }, [account]);
+
+  const storeCard = async () => {
+    if (!account) return;
+    setBusy(true);
+    setError('');
+    setCardNote('');
+    try {
+      const result = await saveCardDetails(account.id, card);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setCard(BLANK_CARD);
+      setCardSaved(await cardStatus(account.id));
+      setCardNote('Card details saved.');
+    } catch {
+      setError('That did not go through. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -255,6 +289,83 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                   </Link>{' '}
                   and picked here.
                 </p>
+
+                <div className="mt-6 rounded-xl border border-line">
+                  <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-4 py-2.5">
+                    <span className="font-mono text-xs text-muted">card details · for Amazon&apos;s verify-payment page</span>
+                    <span className="font-mono text-xs" style={{ color: cardSaved.set ? TONE.good : TONE.muted }}>
+                      {cardSaved.set ? `saved${cardSaved.set_at ? ` ${new Date(cardSaved.set_at).toLocaleDateString()}` : ''}` : 'not saved'}
+                    </span>
+                  </div>
+                  {editing ? (
+                    <div className="grid gap-3 px-4 py-4 sm:grid-cols-6">
+                      <div className="sm:col-span-4">
+                        <label htmlFor="cd-number" className={label}>
+                          Card number
+                        </label>
+                        <input id="cd-number" type="password" inputMode="numeric" autoComplete="off" maxLength={23} placeholder={cardSaved.set ? 'Saved. Enter a new one to replace it' : ''} value={card.number} onChange={(e) => setCard({ ...card, number: e.target.value })} className={`${field} font-mono`} />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label htmlFor="cd-cvv" className={label}>
+                          Security code
+                        </label>
+                        <input id="cd-cvv" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={card.cvv} onChange={(e) => setCard({ ...card, cvv: e.target.value })} className={`${field} font-mono`} />
+                      </div>
+                      <div className="sm:col-span-1">
+                        <label htmlFor="cd-month" className={label}>
+                          Exp. month
+                        </label>
+                        <input id="cd-month" inputMode="numeric" maxLength={2} placeholder="04" value={card.exp_month} onChange={(e) => setCard({ ...card, exp_month: e.target.value })} className={`${field} font-mono`} />
+                      </div>
+                      <div className="sm:col-span-1">
+                        <label htmlFor="cd-year" className={label}>
+                          Exp. year
+                        </label>
+                        <input id="cd-year" inputMode="numeric" maxLength={4} placeholder="2029" value={card.exp_year} onChange={(e) => setCard({ ...card, exp_year: e.target.value })} className={`${field} font-mono`} />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <label htmlFor="cd-name" className={label}>
+                          Name on card
+                        </label>
+                        <input id="cd-name" maxLength={60} autoComplete="off" value={card.name} onChange={(e) => setCard({ ...card, name: e.target.value })} className={field} />
+                      </div>
+                      <div className="sm:col-span-1">
+                        <label htmlFor="cd-zip" className={label}>
+                          Billing zip
+                        </label>
+                        <input id="cd-zip" maxLength={10} value={card.zip} onChange={(e) => setCard({ ...card, zip: e.target.value })} className={`${field} font-mono`} />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 sm:col-span-6">
+                        <button type="button" disabled={busy || !card.number.trim() || !card.cvv.trim()} className={btn} onClick={() => void storeCard()}>
+                          Save card details
+                        </button>
+                        {cardSaved.set ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-bad disabled:opacity-40"
+                            onClick={async () => {
+                              if (!account || !window.confirm('Remove the saved card details from this account?')) return;
+                              setBusy(true);
+                              try {
+                                await clearCardDetails(account.id);
+                                setCardSaved(await cardStatus(account.id));
+                                setCardNote('Card details removed.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            remove
+                          </button>
+                        ) : null}
+                        {cardNote ? <span className="font-mono text-xs text-good">{cardNote}</span> : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3 font-mono text-xs text-muted">save the account first, then open edit details to add its card</div>
+                  )}
+                </div>
               </div>
             ) : null}
 

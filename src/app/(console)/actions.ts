@@ -245,6 +245,49 @@ export async function getSnapshot(id: string): Promise<{ taken_at: string; note:
   }
 }
 
+export interface CardDetails {
+  number: string;
+  exp_month: string;
+  exp_year: string;
+  cvv: string;
+  name: string;
+  zip: string;
+}
+
+/** Saves the card details used to answer Amazon's "Verify payment" page. Stored in the vault; never read back to the console. */
+export async function saveCardDetails(id: string, card: CardDetails): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_card_details', { p_account: id, p: card });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function clearCardDetails(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_clear_card_details', { p_account: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function cardStatus(id: string): Promise<{ set: boolean; set_at: string | null }> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return { set: false, set_at: null };
+    const { data } = await ctx.db.rpc('dd_ops_card_status', { p_account: id });
+    return (data as { set: boolean; set_at: string | null } | null) ?? { set: false, set_at: null };
+  } catch {
+    return { set: false, set_at: null };
+  }
+}
+
 // ---------------------------------------------------------------- Proxies
 
 /** Imports proxies from pasted or uploaded lines shaped host:port:username:password. Passwords go to the vault. */
