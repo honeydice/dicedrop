@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.12.2"
+VERSION = "0.12.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1023,25 +1023,68 @@ def add_gift(page, gift):
     return "gift added" + ("" if sender is not None or not who else " (sender written into the message)")
 
 
+ORDER_NUMBER = r"\b\d{3}-\d{7}-\d{7}\b"
+
+
+def order_numbers(view):
+    import re
+
+    try:
+        return set(re.findall(ORDER_NUMBER, view.url + " " + view.content()))
+    except Exception:
+        return set()
+
+
 def place_order(page):
-    """The ONLY place in this worker that buys. It runs only for a "place_order" run, and clicks the button once.
-    Returns the Amazon order number. After the click nothing is retried, so an order can never be placed twice."""
+    """The ONLY place in this worker that buys. It runs only for a "place_order" run.
+    It clicks Place your order once (and confirms Amazon's duplicate page once if that appears).
+    The order counts as placed as soon as either Amazon's confirmation page shows, or a new order number
+    appears in the account's order history, which is checked every 15 seconds in a second tab.
+    Returns the Amazon order number."""
     import re
 
     expected = ""
     match = re.search(r"p-(\d{3}-\d{7}-\d{7})", page.url)
     if match:
         expected = match.group(1)
+
+    # Note which orders the account already has, so the new one can be recognized.
+    history, known = None, set()
+    try:
+        history = page.context.new_page()
+        history.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=60000)
+        time.sleep(2)
+        known = order_numbers(history)
+        page.bring_to_front()
+    except Exception:
+        history = None
+
     button = first_visible(page, "#placeOrder, input[name='placeYourOrder1']")
     if button is None:
         raise Stop("Could not find Amazon's Place your order button. Nothing was ordered." + describe(page))
     current_job["place_clicked"] = True
     button.click()
 
-    confirmed = False
+    def new_in_history():
+        if history is None:
+            return ""
+        try:
+            history.reload(wait_until="domcontentloaded", timeout=45000)
+            time.sleep(1.5)
+            fresh = order_numbers(history) - known
+        except Exception:
+            return ""
+        if not fresh:
+            return ""
+        return expected if expected in fresh else sorted(fresh)[0]
+
+    order_id = ""
+    on_confirmation = False
     confirmed_duplicate = False
-    deadline = time.time() + 240  # Amazon can pause on a "Verify payment" page for a while before confirming
-    while time.time() < deadline:
+    started = time.time()
+    last_look = started
+    deadline = started + 240
+    while time.time() < deadline and not order_id and not on_confirmation:
         time.sleep(1)
         try:
             address = page.url.lower()
@@ -1049,7 +1092,7 @@ def place_order(page):
         except Exception:
             continue
         if "thankyou" in address or "order placed" in words or "your order has been placed" in words or "thank you, your order" in words:
-            confirmed = True
+            on_confirmation = True
             break
         if "/duplicateorder" in address and not confirmed_duplicate:
             # Amazon noticed a recent order for the same item and holds this one as "pending" until it is confirmed.
@@ -1061,26 +1104,41 @@ def place_order(page):
                 confirmed_duplicate = True
                 current_job["duplicate_confirmed"] = True
                 deadline = time.time() + 240
-    if not confirmed:
+        if time.time() - last_look >= 15:
+            last_look = time.time()
+            order_id = new_in_history()
+
+    if on_confirmation:
+        settle(page)
+        found = order_numbers(page)
+        if expected and (expected in found or not found):
+            order_id = expected if expected in found else ""
+        if not order_id and found:
+            order_id = sorted(found)[0]
+        if not order_id:
+            time.sleep(4)
+            order_id = new_in_history() or expected
+    elif not order_id:
+        time.sleep(5)
+        order_id = new_in_history()
+
+    if not on_confirmation and not order_id:
         stopped_on = describe(page)
-        # No confirmation page. Look in the account's order history: if the order is listed there, it was placed.
+        raise Stop("Place your order was clicked, but no confirmation page and no new order in the order history after 4 minutes. The order MAY have been placed. Amazon stopped on:" + stopped_on)
+
+    if not on_confirmation and order_id:
+        # Amazon is still showing a payment page, but the order exists. Show the order itself for the record.
         try:
-            page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+            page.goto("https://www.amazon.com/gp/your-account/order-details?orderID=" + order_id, wait_until="domcontentloaded", timeout=60000)
             settle(page)
-            if expected and expected in page.content():
-                return expected
         except Exception:
             pass
-        raise Stop("Place your order was clicked, but Amazon's confirmation page did not appear and the order is not in the order history yet. The order MAY have been placed. Amazon stopped on:" + stopped_on)
-    settle(page)
-    found = []
     try:
-        found = re.findall(r"\b\d{3}-\d{7}-\d{7}\b", page.url + " " + page.content())
+        if history is not None:
+            history.close()
     except Exception:
         pass
-    if expected and (expected in found or not found):
-        return expected
-    return found[0] if found else expected
+    return order_id
 
 
 def read_totals(page):
