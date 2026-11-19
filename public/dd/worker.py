@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.17.5"
+VERSION = "0.17.6"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1554,6 +1554,12 @@ def open_order(page, number, tries=2, wait=6.0):
                         return "list", card_words
             else:
                 log("order " + number + " is not in the list; orders listed: " + ", ".join(sorted(order_numbers(page)))[:200])
+                try:
+                    newest = page.locator(".order-card, .js-order-card").first
+                    if attempt == 0 and newest.count() > 0:
+                        log("newest order in the list reads: " + " ".join(newest.inner_text(timeout=5000).split())[:260])
+                except Exception:
+                    pass
                 # Not on the first page of Your Orders (older order), or too new to be listed: its own address.
                 page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
                 settle(page)
