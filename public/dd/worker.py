@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.15.0"
+VERSION = "0.15.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -38,8 +38,22 @@ job_lock = threading.Lock()
 current_job = {"text": ""}
 
 
+recent_lines = []
+
+
 def log(message):
-    print(time.strftime("%Y-%m-%d %H:%M:%S"), message, flush=True)
+    line = time.strftime("%Y-%m-%d %H:%M:%S") + " " + str(message)
+    print(line, flush=True)
+    recent_lines.append(line[:300])
+    del recent_lines[:-80]
+
+
+def ship_log(kind, extra=""):
+    """Send the last lines of this box's log to DiceDrop, so a problem can be read without logging in to the box."""
+    try:
+        call("/api/worker/v1/log", {"type": kind, "text": (extra + "\n" if extra else "") + "\n".join(recent_lines[-45:])})
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- talking to DiceDrop
@@ -543,8 +557,9 @@ def run_in_account_browser(label, note, work):
                 shot = snap(page)
     except Stop as stop:
         error = str(stop)[:1800]
-    except Exception as failure:
-        error = "While " + stage[0] + ": " + str(failure)[:300]
+    except BaseException as failure:
+        error = "While " + stage[0] + ": " + repr(failure)[:300]
+        log("browser session ended unexpectedly while " + stage[0] + ": " + repr(failure)[:300])
     finally:
         low_level = restore_stderr(saved_stderr)
         if error and low_level and not error.startswith(("Amazon", "No ", "The proxy", "This item", "Out of stock")):
@@ -1586,6 +1601,7 @@ def cart_only_job(job):
         current_job["whole_page"] = True
         current_job["place_clicked"] = False
         current_job["duplicate_confirmed"] = False
+        current_job["recorded_done"] = False
         current_job["shot"] = ""
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
@@ -1648,33 +1664,39 @@ def cart_only_job(job):
                     raise Stop("Could not read the order total at checkout, so the order was not placed." + describe(page))
                 stage[0] = "placing the order"
                 progress(note="placing the order · total $" + format(totals["total"], ".2f"))
-                totals["amazon_order_id"] = place_order(page, label)
+                order_id = place_order(page, label)
                 if current_job.get("verify_note"):
                     totals["verify"] = current_job["verify_note"]
                 if current_job.get("verify_seen"):
                     totals["verify_page"] = current_job["verify_seen"]
-                totals["placed"] = True
+                # Record the order right away. Nothing after this line can undo it or cause it to be placed again.
+                log("order placed on Amazon: " + str(order_id))
+                progress(done=True, placed=True, amazon_order_id=order_id, checkout=totals,
+                         note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", ""))
+                         + (" · duplicate confirmed" if current_job.get("duplicate_confirmed") else "")
+                         + (" · " + str(totals["verify"]) if totals.get("verify") else ""))
+                current_job["recorded_done"] = True
                 stage[0] = "capturing the tracking card"
-                progress(note="ordered · capturing the tracking card")
-                estimate = capture_tracking(page, totals["amazon_order_id"])
-                if estimate:
-                    totals["delivery_estimate"] = estimate
+                estimate = capture_tracking(page, order_id)
+                if current_job.get("shot"):
+                    progress(note="ordered · " + (order_id or "") + (" · expected " + estimate if estimate else ""), screenshot=current_job["shot"])
             return totals
 
         totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
         totals = totals or {}
-        if error:
+        if current_job.get("recorded_done"):
+            pass  # the order was already recorded as placed; a later hiccup must not change that
+        elif error:
             progress(done=True, error=error, note="stopped", screenshot=shot, place_uncertain=bool(current_job.get("place_clicked")))
-        elif totals.get("placed"):
-            order_id = totals.pop("amazon_order_id", "") or ""
-            totals.pop("placed", None)
-            progress(done=True, placed=True, amazon_order_id=order_id, note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", "")) + (" · duplicate confirmed" if current_job.get("duplicate_confirmed") else "") + (" · " + str(totals.get("verify")) if totals.get("verify") else ""), screenshot=shot, checkout=totals)
         else:
             progress(done=True, note="cart ready · address added · " + str(totals.get("gift", "gift step skipped")) + " · not ordered", screenshot=shot, checkout=totals)
         log("cart run " + job.get("order_number", "") + " finished" + (": " + error if error else ""))
-    except Exception as failure:
-        progress(done=True, error="The cart run could not start: " + str(failure)[:200], note="stopped")
+    except BaseException as failure:  # anything at all: the order must never be left looking unfinished
+        log("run for " + str(job.get("order_number")) + " ended unexpectedly: " + repr(failure)[:300])
+        if not current_job.get("recorded_done"):
+            progress(done=True, error="The run ended unexpectedly: " + repr(failure)[:200], note="stopped", place_uncertain=bool(current_job.get("place_clicked")))
     finally:
+        ship_log("job", "run " + str(job.get("order_number")) + " (" + str(job.get("run_kind")) + ")")
         current_job["shot"] = ""
         current_job["verify_note"] = ""
         current_job["verify_seen"] = ""
@@ -1700,6 +1722,7 @@ def main():
         time.sleep(60)
         return 1
     log("DiceDrop worker " + VERSION + " starting on " + socket.gethostname())
+    ship_log("started")
     last_update_check = time.time()
     while True:
         try:
