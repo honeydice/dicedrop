@@ -327,8 +327,10 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
           const fees = o.checkout?.tax != null || o.checkout?.shipping != null ? Number(o.checkout?.tax ?? 0) + Number(o.checkout?.shipping ?? 0) : null;
           const total = o.buy_cost ?? o.checkout?.total ?? null;
           const note =
-            ['ordered', 'shipped'].includes(o.status) && o.checkout?.delivery_estimate
-              ? `expected ${expected(o.checkout.delivery_estimate)}`
+            ['ordered', 'shipped'].includes(o.status) && (o.checkout?.delivery_estimate || o.tracking_number)
+              ? [o.status === 'shipped' ? [o.carrier, o.tracking_number].filter(Boolean).join(' ') : '', o.checkout?.delivery_estimate ? `expected ${expected(o.checkout.delivery_estimate)}` : '']
+                  .filter(Boolean)
+                  .join(' · ')
               : o.status === 'issue'
                 ? (o.issue_reason ?? '')
                 : o.status === 'ordering' || o.status === 'held'
@@ -383,6 +385,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                       ['fees', money(o.sale_fees)],
                       ['cost', o.buy_cost !== null ? money(o.buy_cost) : o.est_cost !== null ? `est. ${money(o.est_cost)}` : '—'],
                       ['tracking', o.tracking_number ?? '—'],
+                      ['carrier', o.carrier ?? '—'],
                       ['ship_to', [o.ship_name, o.ship_line1, o.ship_city, o.ship_state, o.ship_postal].filter(Boolean).join(', ') || '—'],
                       ['checkout_items', o.checkout?.items != null ? money(o.checkout.items) : '—'],
                       ['checkout_shipping', o.checkout?.shipping != null ? money(o.checkout.shipping) : '—'],

@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.16.0"
+VERSION = "0.16.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1461,6 +1461,39 @@ def picture(page, card_only=True):
         return ""
 
 
+ORDER_DETAILS = "https://www.amazon.com/gp/your-account/order-details?orderID="
+
+
+def read_tracking(page, result, card_words=""):
+    """Reads the opened Track package page into `result`: state, delivery window, tracking number, carrier, picture."""
+    import re
+
+    settle(page)
+    status, estimate = "", ""
+    for _ in range(20):
+        try:
+            status = page.evaluate(STATUS_JS)
+            estimate = page.evaluate(ESTIMATE_JS)
+        except Exception:
+            pass
+        if status or estimate:
+            break
+        time.sleep(0.5)
+    pause(1.0, 2.0)
+    words = page_words(page, 2500)
+    result["state"] = state_from_words(status or estimate or card_words, short=True)
+    result["delivery_estimate"] = estimate[:90]
+    result["note"] = (status or estimate)[:120]
+    found = re.search(r"Tracking (?:ID|number|#)\s*:?\s*([A-Z0-9]{8,34})", words, re.I)
+    if found:
+        result["tracking_number"] = found.group(1)
+    found = re.search(r"(?:Shipped with|Delivery by|Carrier:?)\s+([A-Za-z][A-Za-z .&-]{1,28}?)(?=\s+(?:Tracking|See|Your|$))", words)
+    if found:
+        result["carrier"] = found.group(1).strip()
+    result["screenshot"] = picture(page, card_only=True)
+    return result
+
+
 def check_order(page, order):
     """Looks one placed order up on Amazon the way a person would: Your Orders, that order, Track package.
     Returns what Amazon shows: state (ordered, shipped, delivered, cancelled), the delivery estimate, the
@@ -1469,7 +1502,7 @@ def check_order(page, order):
 
     number = order["amazon_order_id"]
     result = {"state": "ordered", "delivery_estimate": "", "tracking_number": "", "carrier": "", "note": "", "screenshot": ""}
-    details = "https://www.amazon.com/gp/your-account/order-details?orderID=" + number
+    details = ORDER_DETAILS + number
 
     page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
     settle(page)
@@ -1485,30 +1518,7 @@ def check_order(page, order):
     if card is not None and state_from_words(card_words, short=True) != "cancelled":
         opened_track = click_text_in(card, ["Track package", "Track Package"])
     if opened_track:
-        settle(page)
-        status, estimate = "", ""
-        for _ in range(20):
-            try:
-                status = page.evaluate(STATUS_JS)
-                estimate = page.evaluate(ESTIMATE_JS)
-            except Exception:
-                pass
-            if status or estimate:
-                break
-            time.sleep(0.5)
-        pause(1.0, 2.0)
-        words = page_words(page, 2500)
-        result["state"] = state_from_words(status or estimate or card_words, short=True)
-        result["delivery_estimate"] = estimate[:90]
-        result["note"] = (status or estimate)[:120]
-        found = re.search(r"Tracking (?:ID|number|#)\s*:?\s*([A-Z0-9]{8,34})", words, re.I)
-        if found:
-            result["tracking_number"] = found.group(1)
-        found = re.search(r"(?:Shipped with|Delivery by|Carrier:?)\s+([A-Za-z][A-Za-z .&-]{1,28}?)(?=\s+(?:Tracking|See|Your|$))", words)
-        if found:
-            result["carrier"] = found.group(1).strip()
-        result["screenshot"] = picture(page, card_only=True)
-        return result
+        return read_tracking(page, result, card_words)
 
     # No Track package button (a cancelled order has none), or the order is not on the first page: open the order itself.
     if card is None or not click_text_in(card, ["View order details", "Order details", "View order"]):
@@ -1517,6 +1527,15 @@ def check_order(page, order):
     words = page_words(page, 6000)
     from_card = state_from_words(card_words, short=True) if card_words else "ordered"
     result["state"] = from_card if from_card != "ordered" else state_from_words(words)
+    if result["state"] != "cancelled":
+        # An order past the first page of Your Orders: its own page has the same Track package button.
+        try:
+            if click_text(page, ["Track package", "Track Package"]):
+                return read_tracking(page, result, card_words)
+        except Stop:
+            raise
+        except Exception:
+            pass
     if result["state"] == "cancelled":
         result["note"] = ""  # the status itself says it: Cancelled by Amazon
     else:
