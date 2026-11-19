@@ -432,6 +432,30 @@ export async function restoreContaboServers(): Promise<Result> {
   }
 }
 
+/** Saves the Kameleo personal access token to the vault. Boxes fetch it when they install. */
+export async function saveKameleo(token: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    if (token.trim().length < 10) return { ok: false, error: 'Paste the full Kameleo personal access token.' };
+    const { error } = await ctx.db.rpc('dd_ops_kameleo_save', { p_token: token });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function clearKameleo(): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_kameleo_clear');
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 export async function disconnectContabo(): Promise<Result> {
   try {
     const ctx = await operatorDb();

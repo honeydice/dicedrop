@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { deleteBox, rotateBoxToken, serverPower, setBoxState, syncContabo, type Result } from '@/app/(console)/actions';
 import { timeAgo } from '@/lib/format';
 import type { BoxState, OpsBox, OpsBoxes } from '@/lib/types';
-import { Badge, btn, btnDanger, Card, Dot, ErrorNote, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
+import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
 import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 
@@ -44,6 +44,9 @@ export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBox
   const now = useNow();
   const [busy, setBusy] = useState(false);
   const [token, setToken] = useState<{ box: string; value: string } | null>(null);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const installCommand = (value: string) =>
+    `curl -fsSL ${typeof window === 'undefined' ? '' : window.location.origin}/dd/install.sh | sudo bash -s -- ${value}`;
   const [open, setOpen] = useState('');
 
   const run = async (work: () => Promise<Result>): Promise<Result | null> => {
@@ -97,15 +100,34 @@ export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBox
       </section>
 
       {token ? (
-        <div role="status" className="mb-5 rounded-2xl border border-accent/50 bg-raised p-5">
-          <div className="font-medium">Token for {token.box}. Copy it now; it is shown only once.</div>
-          <code className="mt-2 block break-all font-mono text-[13px] text-accent">{token.value}</code>
-          <p className="mt-3 text-[13px] text-muted">
-            The box uses this token to check in. The one-line install command that goes with it arrives with Worker v1.
-          </p>
-          <button type="button" className={`${btn} mt-4`} onClick={() => setToken(null)}>
-            I have copied it
-          </button>
+        <div role="status" className="mb-5 overflow-hidden rounded-2xl border border-accent/50 bg-panel">
+          <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+            <div className="font-mono text-[13px] text-muted">install {token.box}</div>
+            <button type="button" className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-muted hover:text-fg" onClick={() => setToken(null)}>
+              close
+            </button>
+          </div>
+          <div className="px-5 py-4">
+            <code className="block break-all rounded-[10px] border border-edge bg-raised px-3.5 py-3 font-mono text-[13px] text-fg">{installCommand(token.value)}</code>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className={btnAccent}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(installCommand(token.value));
+                    setCopiedCmd(true);
+                    setTimeout(() => setCopiedCmd(false), 1500);
+                  } catch {
+                    // Clipboard is unavailable; the command is on screen to select by hand.
+                  }
+                }}
+              >
+                {copiedCmd ? 'Copied' : 'Copy command'}
+              </button>
+              <span className="font-mono text-xs text-muted">shown once · paste into the box as root</span>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -189,12 +211,12 @@ export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBox
                   disabled={busy}
                   className={btn}
                   onClick={async () => {
-                    if (b.has_token && !window.confirm(`Create a new token for ${b.name}? The old token stops working right away.`)) return;
+                    if (b.has_token && !window.confirm(`Make a new install command for ${b.name}? If this box is already installed, it will need to be installed again.`)) return;
                     const result = await run(() => rotateBoxToken(b.id));
                     if (result?.ok && result.secret) setToken({ box: b.name, value: result.secret });
                   }}
                 >
-                  {b.has_token ? 'New token' : 'Create token'}
+                  Install command
                 </button>
                 <button
                   type="button"

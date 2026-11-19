@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { addCard, clearTotp, importProxies, removeCard, removeProxies, setAccountsPerBox, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
@@ -42,6 +42,7 @@ export function SettingsView({
   cards,
   proxies,
   perBox,
+  kameleoSetAt,
 }: {
   selectors: SelectorRow[];
   operators: string[];
@@ -52,6 +53,7 @@ export function SettingsView({
   cards: OpsCard[];
   proxies: OpsProxy[];
   perBox: number;
+  kameleoSetAt: string | null;
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -83,6 +85,7 @@ export function SettingsView({
   const [keyFor, setKeyFor] = useState('');
   const [keyDraft, setKeyDraft] = useState('');
   const [card, setCard] = useState({ bank: '', last4: '', nickname: '' });
+  const [kameleoDraft, setKameleoDraft] = useState('');
   const [perBoxDraft, setPerBoxDraft] = useState(String(perBox));
   const [proxyText, setProxyText] = useState('');
   const [proxyProvider, setProxyProvider] = useState('');
@@ -118,6 +121,7 @@ export function SettingsView({
   const summary: Record<string, string> = {
     appearance: 'light or dark',
     'contabo connection': connected ? `connected · ${contabo?.instance_count ?? 0} servers` : 'not connected',
+    kameleo: kameleoSetAt ? 'token saved' : 'no token yet',
     proxies: `${proxies.length} proxies · ${proxiesFree} free`,
     cards: `${cards.length} card${cards.length === 1 ? '' : 's'}`,
     'two-step codes': `${generating} of ${twoStep.length} generating`,
@@ -232,6 +236,52 @@ export function SettingsView({
               </form>
             )}
           </div>
+        </Section>
+
+        <Section title="kameleo" summary={summary['kameleo']} open={openSet.has('kameleo')} onToggle={toggle}>
+          <form
+            className="flex flex-wrap items-end gap-3 px-5 py-4"
+            autoComplete="off"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const ok = await save(() => saveKameleo(kameleoDraft));
+              if (ok) setKameleoDraft('');
+            }}
+          >
+            <span className="mb-3.5">
+              <Dot color={kameleoSetAt ? TONE.good : TONE.muted} />
+            </span>
+            <div className="flex-1 basis-72">
+              <label htmlFor="km-token" className={label}>
+                Personal access token
+              </label>
+              <input
+                id="km-token"
+                type="password"
+                autoComplete="off"
+                placeholder={kameleoSetAt ? `Saved ${when(kameleoSetAt)}. Paste a new one to replace it` : 'Paste the token from login.kameleo.io/PAT'}
+                value={kameleoDraft}
+                onChange={(e) => setKameleoDraft(e.target.value)}
+                className={`${field} font-mono`}
+              />
+            </div>
+            <button type="submit" disabled={busy || kameleoDraft.trim().length < 10} className={btnAccent}>
+              Save token
+            </button>
+            {kameleoSetAt ? (
+              <button
+                type="button"
+                disabled={busy}
+                className={btnDanger}
+                onClick={() => {
+                  if (!window.confirm('Remove the Kameleo token? Boxes already installed keep running; new installs will need a token.')) return;
+                  void save(() => clearKameleo());
+                }}
+              >
+                Remove
+              </button>
+            ) : null}
+          </form>
         </Section>
 
         <Section title="proxies" summary={summary['proxies']} open={openSet.has('proxies')} onToggle={toggle}>
