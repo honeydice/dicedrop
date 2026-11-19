@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.12.1"
+VERSION = "0.12.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1039,6 +1039,7 @@ def place_order(page):
     button.click()
 
     confirmed = False
+    confirmed_duplicate = False
     deadline = time.time() + 240  # Amazon can pause on a "Verify payment" page for a while before confirming
     while time.time() < deadline:
         time.sleep(1)
@@ -1050,9 +1051,16 @@ def place_order(page):
         if "thankyou" in address or "order placed" in words or "your order has been placed" in words or "thank you, your order" in words:
             confirmed = True
             break
-        if "duplicate order" in words:
-            current_job["place_clicked"] = False
-            raise Stop("Amazon says this would be a duplicate of a recent order and is asking to confirm. Nothing was ordered." + describe(page))
+        if "/duplicateorder" in address and not confirmed_duplicate:
+            # Amazon noticed a recent order for the same item and holds this one as "pending" until it is confirmed.
+            # Selling the same item to more than one buyer is normal here, so confirm it. This is done once.
+            again = first_visible(page, "#placeOrder, input[name='placeYourOrder1']")
+            if again is not None:
+                pause(1.0, 2.0)
+                again.click()
+                confirmed_duplicate = True
+                current_job["duplicate_confirmed"] = True
+                deadline = time.time() + 240
     if not confirmed:
         stopped_on = describe(page)
         # No confirmation page. Look in the account's order history: if the order is listed there, it was placed.
@@ -1114,6 +1122,7 @@ def cart_only_job(job):
         current_job["text"] = "cart run " + job.get("order_number", "")
         current_job["whole_page"] = True
         current_job["place_clicked"] = False
+        current_job["duplicate_confirmed"] = False
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
         ship = order["ship_to"]
@@ -1190,7 +1199,7 @@ def cart_only_job(job):
         elif totals.get("placed"):
             order_id = totals.pop("amazon_order_id", "") or ""
             totals.pop("placed", None)
-            progress(done=True, placed=True, amazon_order_id=order_id, note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", "")), screenshot=shot, checkout=totals)
+            progress(done=True, placed=True, amazon_order_id=order_id, note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", "")) + (" · duplicate confirmed" if current_job.get("duplicate_confirmed") else ""), screenshot=shot, checkout=totals)
         else:
             progress(done=True, note="cart ready · address added · " + str(totals.get("gift", "gift step skipped")) + " · not ordered", screenshot=shot, checkout=totals)
         log("cart run " + job.get("order_number", "") + " finished" + (": " + error if error else ""))
