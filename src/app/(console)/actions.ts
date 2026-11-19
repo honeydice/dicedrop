@@ -520,6 +520,20 @@ export async function updateSelector(key: string, value: string): Promise<Result
   }
 }
 
+/** How often each account's placed orders are looked up on Amazon. */
+export async function setCheckInterval(minutes: number): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const n = Math.floor(Number(minutes));
+    if (!Number.isFinite(n) || n < 5 || n > 1440) return { ok: false, error: 'Use a number of minutes between 5 and 1440.' };
+    const { error } = await ctx.db.from('platform_settings').update({ tracking_interval_minutes: n }).eq('id', 1);
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 export async function setAccountsPerBox(count: number): Promise<Result> {
   try {
     const ctx = await operatorDb();

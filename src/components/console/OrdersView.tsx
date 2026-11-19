@@ -75,6 +75,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   const [open, setOpen] = useState('');
   const [busy, setBusy] = useState('');
   const [testOpen, setTestOpen] = useState(false);
+  const [checked, setChecked] = useState('');
   const [test, setTest] = useState({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '', gift: 'true', gift_from: '', gift_message: '' });
   const [shot, setShot] = useState<{ title: string; taken_at: string; note: string | null; image: string } | null>(null);
 
@@ -178,6 +179,18 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
         <button type="button" className={btn} onClick={() => setTestOpen(!testOpen)}>
           {testOpen ? 'Close test order' : 'New test order'}
         </button>
+        <button
+          type="button"
+          disabled={busy === 'check'}
+          className={`${btn} ml-2`}
+          onClick={async () => {
+            const n = await rpc('check', 'dd_ops_check_orders_now', {});
+            if (n !== null) setChecked(typeof n === 'number' && n > 0 ? `checking ${n} account${n === 1 ? '' : 's'} on Amazon now` : 'no placed orders are waiting on Amazon');
+          }}
+        >
+          Check Amazon now
+        </button>
+        {checked ? <span className="ml-3 font-mono text-xs text-muted">{checked}</span> : null}
       </div>
 
       {testOpen ? (

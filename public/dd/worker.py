@@ -8,6 +8,8 @@ What it does:
     totals read, screenshot taken. Nothing is bought.
   * when the operator clicks "Place order (real)": the same steps, then the order is placed once and the
     confirmation page is captured.
+  * every 30 minutes (set in DiceDrop), looks at each account's placed orders on Amazon and reports
+    shipped, delivered, or cancelled, with a picture of the order's tracking page.
 The box only ever calls out. It picks up new versions of this file on its own.
 """
 import base64
@@ -23,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1238,6 +1240,168 @@ def capture_tracking(page, order_id):
     return estimate
 
 
+# ---------------------------------------------------------------- the regular look at placed orders
+
+STATUS_JS = """() => {
+  const names = ['Ordered', 'Shipped', 'Out for delivery', 'Delivered', 'On the way', 'Arriving today', 'Cancelled', 'Canceled', 'Not yet shipped', 'Preparing for shipment', 'Delayed', 'Running late', 'Undeliverable', 'Returned'];
+  const shown = (e) => e.offsetParent !== null;
+  for (const e of document.querySelectorAll('h1,h2,h3,h4,h5,[class*="milestone-primary" i],[class*="primary-status" i]')) {
+    const t = (e.innerText || '').trim().replace(/\\s+/g, ' ');
+    if (shown(e) && names.some((n) => t.toLowerCase() === n.toLowerCase())) return t;
+  }
+  return '';
+}"""
+
+
+def order_card(page, amazon_order_id):
+    for selector in [".order-card", ".js-order-card", ".a-box-group", "li.order-card__list"]:
+        try:
+            found = page.locator(selector).filter(has_text=amazon_order_id)
+            if found.count() > 0:
+                return found.first
+        except Exception:
+            continue
+    return None
+
+
+def state_from_words(words):
+    low = words.lower()
+    if "cancelled" in low or "canceled" in low:
+        return "cancelled"
+    if "delivered" in low and "not delivered" not in low and "to be delivered" not in low:
+        return "delivered"
+    if any(word in low for word in ["shipped", "on the way", "out for delivery", "arriving today", "in transit"]) and "not yet shipped" not in low:
+        return "shipped"
+    return "ordered"
+
+
+def picture(page, card_only=True):
+    """A picture of the tracking card if there is one, otherwise the top of the page."""
+    if card_only:
+        try:
+            heading = page.locator("text=/^(Arriving|Now expected|Expected|Delivered|Not yet shipped|Out for delivery|Shipped|On the way)/").first
+            block = heading.locator("xpath=ancestor::*[contains(., 'Shipped') and contains(., 'Delivered')][1]")
+            if block.count() > 0 and block.first.is_visible():
+                return base64.b64encode(block.first.screenshot(type="jpeg", quality=70)).decode()
+        except Exception:
+            pass
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+        return base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
+    except Exception:
+        return ""
+
+
+def check_order(page, order):
+    """Looks one placed order up on Amazon the way a person would: Your Orders, that order, Track package.
+    Returns what Amazon shows: state (ordered, shipped, delivered, cancelled), the delivery estimate, the
+    tracking number and carrier when shown, a short note, and a picture."""
+    import re
+
+    number = order["amazon_order_id"]
+    result = {"state": "ordered", "delivery_estimate": "", "tracking_number": "", "carrier": "", "note": "", "screenshot": ""}
+    details = "https://www.amazon.com/gp/your-account/order-details?orderID=" + number
+
+    page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+    settle(page)
+    card = order_card(page, number)
+    card_words = ""
+    if card is not None:
+        try:
+            card_words = " ".join(card.inner_text(timeout=5000).split())
+        except Exception:
+            card_words = ""
+
+    opened_track = False
+    if card is not None and state_from_words(card_words) != "cancelled":
+        opened_track = click_text_in(card, ["Track package", "Track Package"])
+    if opened_track:
+        settle(page)
+        status, estimate = "", ""
+        for _ in range(20):
+            try:
+                status = page.evaluate(STATUS_JS)
+                estimate = page.evaluate(ESTIMATE_JS)
+            except Exception:
+                pass
+            if status or estimate:
+                break
+            time.sleep(0.5)
+        pause(1.0, 2.0)
+        words = page_words(page, 2500)
+        result["state"] = state_from_words(status or estimate or card_words)
+        result["delivery_estimate"] = estimate[:90]
+        result["note"] = (status or estimate)[:120]
+        found = re.search(r"Tracking (?:ID|number|#)\s*:?\s*([A-Z0-9]{8,34})", words, re.I)
+        if found:
+            result["tracking_number"] = found.group(1)
+        found = re.search(r"(?:Shipped with|Delivery by|Carrier:?)\s+([A-Za-z][A-Za-z .&-]{1,28}?)(?=\s+(?:Tracking|See|Your|$))", words)
+        if found:
+            result["carrier"] = found.group(1).strip()
+        result["screenshot"] = picture(page, card_only=True)
+        return result
+
+    # No Track package button (a cancelled order has none), or the order is not on the first page: open the order itself.
+    if card is None or not click_text_in(card, ["View order details", "Order details", "View order"]):
+        page.goto(details, wait_until="domcontentloaded", timeout=90000)
+    settle(page)
+    words = page_words(page, 2500)
+    result["state"] = state_from_words(card_words + " " + words)
+    for line in re.split(r"(?<=[.!])\s+", words):
+        if result["state"][:6] in line.lower() or (result["state"] == "cancelled" and "cancel" in line.lower()):
+            result["note"] = line.strip()[:160]
+            break
+    found = re.search(r"((?:Arriving|Now expected|Delivered)[^.]{3,60})", card_words + " " + words)
+    if found and result["state"] != "cancelled":
+        result["delivery_estimate"] = found.group(1).strip()[:90]
+    result["screenshot"] = picture(page, card_only=False)
+    return result
+
+
+def tracking_job(job):
+    label = job.get("account_label") or ""
+    orders = job.get("orders") or []
+    problem = ""
+    try:
+        current_job["text"] = "checking orders on " + label
+
+        def work(page, secrets, stage):
+            stage[0] = "signing in on Amazon"
+            state, reason = amazon_sign_in(page, label, secrets)
+            if state != "signed_in":
+                report(label, session_state=state, error=reason, note="sign-in did not finish")
+                raise Stop("Amazon sign-in did not finish. " + reason)
+            report(label, session_state="signed_in", error="")
+            changes = 0
+            for order in orders:
+                stage[0] = "checking order " + str(order.get("order_number"))
+                try:
+                    seen = check_order(page, order)
+                    changed = seen["state"] != order.get("status")
+                    if not changed:
+                        seen["screenshot"] = ""  # nothing new, so no picture is stored
+                    reply = call("/api/worker/v1/orders/" + order["id"] + "/check", seen)
+                    log("order " + str(order.get("order_number")) + " on Amazon: " + seen["state"] + (" · " + seen["note"] if seen["note"] else ""))
+                    changes += 1 if reply.get("changed") else 0
+                except Stop:
+                    raise
+                except Exception as failure:
+                    log("could not check order " + str(order.get("order_number")) + ": " + str(failure)[:200])
+                pause(2.0, 4.0)
+            return changes
+
+        _, problem, _, _ = run_in_account_browser(label, lambda text: None, work)
+    except Exception as failure:
+        problem = "The order check could not run: " + str(failure)[:200]
+    finally:
+        try:
+            call("/api/worker/v1/accounts/checked", {"account": label, "error": problem})
+        except Exception as failure:
+            log("could not record the order check: " + str(failure)[:200])
+        current_job["text"] = ""
+        job_lock.release()
+
+
 def read_totals(page):
     import re
 
@@ -1404,6 +1568,13 @@ def main():
                         if job.get("run_kind") in ("cart_only", "place_order") and job_lock.acquire(blocking=False):
                             log(str(job.get("run_kind")) + " run requested for " + str(job.get("order_number")))
                             threading.Thread(target=cart_only_job, args=(job,), daemon=True).start()
+                            started = True
+                            break
+                if not started:
+                    for job in reply.get("tracking_jobs", []):
+                        if job.get("orders") and job_lock.acquire(blocking=False):
+                            log("order check due for " + str(job.get("account_label")) + " (" + str(len(job["orders"])) + " open)")
+                            threading.Thread(target=tracking_job, args=(job,), daemon=True).start()
                             break
         except urllib.error.HTTPError as error:
             log("DiceDrop answered " + str(error.code) + ". " + error.read().decode()[:200])

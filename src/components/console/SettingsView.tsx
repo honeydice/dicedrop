@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, setCheckInterval, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
@@ -43,6 +43,7 @@ export function SettingsView({
   proxies,
   perBox,
   kameleoSetAt,
+  checkEvery,
 }: {
   selectors: SelectorRow[];
   operators: string[];
@@ -54,6 +55,7 @@ export function SettingsView({
   proxies: OpsProxy[];
   perBox: number;
   kameleoSetAt: string | null;
+  checkEvery: number;
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -86,6 +88,7 @@ export function SettingsView({
   const [keyDraft, setKeyDraft] = useState('');
   const [card, setCard] = useState({ bank: '', last4: '', nickname: '' });
   const [kameleoDraft, setKameleoDraft] = useState('');
+  const [checkDraft, setCheckDraft] = useState(String(checkEvery));
   const [perBoxDraft, setPerBoxDraft] = useState(String(perBox));
   const [proxyText, setProxyText] = useState('');
   const [proxyProvider, setProxyProvider] = useState('');
@@ -125,6 +128,7 @@ export function SettingsView({
     proxies: `${proxies.length} proxies · ${proxiesFree} free`,
     cards: `${cards.length} card${cards.length === 1 ? '' : 's'}`,
     'two-step codes': `${generating} of ${twoStep.length} generating`,
+    'order checks': `every ${checkEvery} minutes`,
     'vps capacity': `${perBox} accounts per vps`,
     'day boundary': timezone,
     selectors: `${selectors.length} selectors`,
@@ -510,6 +514,20 @@ export function SettingsView({
                 </div>
               ))
             )}
+          </div>
+        </Section>
+
+        <Section title="order checks" summary={summary['order checks']} open={openSet.has('order checks')} onToggle={toggle}>
+          <div className="flex flex-wrap items-end gap-3 px-5 py-4">
+            <div className="basis-72">
+              <label htmlFor="check-every" className={label}>
+                Check placed orders on Amazon every (minutes)
+              </label>
+              <input id="check-every" type="number" min={5} max={1440} value={checkDraft} onChange={(e) => setCheckDraft(e.target.value)} className={field} />
+            </div>
+            <button type="button" disabled={busy || Number(checkDraft) === checkEvery} className={btn} onClick={() => void save(() => setCheckInterval(Number(checkDraft)))}>
+              Save
+            </button>
           </div>
         </Section>
 
