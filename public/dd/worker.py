@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.15.1"
+VERSION = "0.15.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1536,9 +1536,7 @@ def tracking_job(job):
                 stage[0] = "checking order " + str(order.get("order_number"))
                 try:
                     seen = check_order(page, order)
-                    changed = seen["state"] != order.get("status")
-                    if not changed:
-                        seen["screenshot"] = ""  # nothing new, so no picture is stored
+                    # The picture always goes along; DiceDrop keeps it the first time each milestone is seen.
                     reply = call("/api/worker/v1/orders/" + order["id"] + "/check", seen)
                     log("order " + str(order.get("order_number")) + " on Amazon: " + seen["state"] + (" · " + seen["note"] if seen["note"] else ""))
                     changes += 1 if reply.get("changed") else 0
