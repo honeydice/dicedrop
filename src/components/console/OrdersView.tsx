@@ -340,16 +340,20 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
           const cogs = o.checkout?.items ?? null;
           const fees = o.checkout?.tax != null || o.checkout?.shipping != null ? Number(o.checkout?.tax ?? 0) + Number(o.checkout?.shipping ?? 0) : null;
           const total = o.buy_cost ?? o.checkout?.total ?? null;
+          const window_ = o.checkout?.delivery_estimate ? expected(o.checkout.delivery_estimate) : '';
+          const shipping = [o.carrier, o.tracking_number].filter(Boolean).join(' ');
           const note =
-            ['ordered', 'shipped'].includes(o.status) && (o.checkout?.delivery_estimate || o.tracking_number)
-              ? [o.status === 'shipped' ? [o.carrier, o.tracking_number].filter(Boolean).join(' ') : '', o.checkout?.delivery_estimate ? `Expected ${expected(o.checkout.delivery_estimate)}` : '']
-                  .filter(Boolean)
-                  .join(' · ')
-              : o.status === 'issue'
-                ? (o.issue_reason ?? '')
-                : o.status === 'ordering' || o.status === 'held'
-                  ? (o.run_note ?? '')
-                  : '';
+            o.status === 'ordered'
+              ? window_ ? `Expected ${window_}` : ''
+              : o.status === 'shipped'
+                ? window_ ? (/\bby\b/i.test(window_) ? `Expected ${window_}` : `Expected by ${window_}`) : shipping ? `Shipped · ${shipping}` : 'Shipped'
+                : o.status === 'delivered'
+                  ? `Delivered ${/^delivered/i.test(o.checkout?.delivery_estimate ?? '') ? (o.checkout?.delivery_estimate ?? '').replace(/^delivered\s*/i, '') : o.delivered_at ? new Date(o.delivered_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}`.trim()
+                  : o.status === 'issue'
+                    ? (o.issue_reason ?? '')
+                    : o.status === 'ordering' || o.status === 'held'
+                      ? (o.run_note ?? '')
+                      : '';
           return (
             <div key={o.id} className="border-b border-divider last:border-b-0" style={fresh ? { background: look.bg } : undefined}>
               <button
@@ -364,7 +368,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
                 <span className="w-[150px] shrink-0 truncate text-fg">{o.order_number}</span>
                 <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
-                <span className="hidden w-[150px] shrink-0 truncate text-soft sm:block" title={o.ship_name ?? o.buyer_name ?? ''}>
+                <span className="hidden w-[160px] shrink-0 truncate text-soft sm:block" title={o.ship_name ?? o.buyer_name ?? ''}>
                   {shortName(o.ship_name ?? o.buyer_name ?? '')}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-muted" title={o.title ?? o.asin ?? ''}>
@@ -373,23 +377,23 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                   {o.stuck ? <span className="ml-2 text-warn">· stuck</span> : null}
                   {o.cancel_requested ? <span className="ml-2 text-warn">· cancel requested</span> : null}
                 </span>
-                <span className="hidden w-[250px] shrink-0 truncate md:block" title={note}>
-                  {note ? (
-                    <span
-                      className="inline-block max-w-full truncate rounded px-2 py-[3px] align-middle text-[11px] font-semibold"
-                      style={o.status === 'issue' ? { background: '#dc2626', color: '#ffffff' } : { background: look.bg, color: look.fg, border: `1px solid ${look.fg}` }}
-                    >
-                      {note}
-                    </span>
-                  ) : null}
+                <span
+                  className="hidden w-[240px] shrink-0 truncate text-[12px] font-semibold md:block"
+                  style={{ color: o.status === 'issue' ? '#ef4444' : look.fg }}
+                  title={[note, o.status === 'shipped' ? shipping : ''].filter(Boolean).join(' · ')}
+                >
+                  {note}
                 </span>
-                <span className="hidden shrink-0 text-right text-muted lg:block">
-                  cogs <span className="text-fg">{money(cogs)}</span> · fees <span className="text-fg">{money(fees)}</span>
+                <span className="hidden w-[96px] shrink-0 text-right tabular-nums text-muted lg:block">
+                  cogs <span className="text-fg">{money(cogs)}</span>
                 </span>
-                <span className="w-[92px] shrink-0 text-right text-muted">
+                <span className="hidden w-[90px] shrink-0 text-right tabular-nums text-muted lg:block">
+                  fees <span className="text-fg">{money(fees)}</span>
+                </span>
+                <span className="w-[104px] shrink-0 text-right tabular-nums text-muted">
                   total <span className="font-semibold text-fg">{money(total)}</span>
                 </span>
-                <span className="w-[62px] shrink-0 text-right text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</span>
+                <span className="w-[62px] shrink-0 text-right tabular-nums text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</span>
               </button>
 
               {isOpen ? (

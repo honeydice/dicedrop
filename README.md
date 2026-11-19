@@ -1,4 +1,4 @@
-# DiceDrop v0.17.7
+# DiceDrop v0.17.8
 
 DiceDrop is an order automation system. Clients send orders through an API, a pool of buyer accounts running on worker boxes places them, and one operator console shows the health of the whole thing.
 
