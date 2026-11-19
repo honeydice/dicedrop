@@ -4,6 +4,8 @@ What it does:
   * checks in with DiceDrop every 15 seconds and reports whether Kameleo is up
   * when the operator asks, signs one of this box's accounts in to Amazon through that account's own
     Kameleo profile and dedicated proxy, then reports the result and a screenshot
+  * when the operator clicks "Order now", does a cart-only run: item in cart, buyer address added, checkout opened,
+    totals read, screenshot taken. It never places an order.
 The box only ever calls out. It picks up new versions of this file on its own.
 """
 import base64
@@ -19,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.3"
+VERSION = "0.9.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -160,6 +162,7 @@ ERROR_BOX = "#auth-error-message-box, #auth-warning-message-box"
 HOME_PAGE = "https://www.amazon.com/"
 ACCOUNT_PAGE = "https://www.amazon.com/gp/css/homepage.html"
 SITE_MARK = "amazon.com"
+REQUIRE_GREETING = True
 
 
 def pause(low=0.8, high=2.0):
@@ -208,11 +211,18 @@ def amazon_sign_in(page, label, secrets):
     entered_code = False
     for _ in range(10):
         url = page.url
-        if "/ap/" not in url and SITE_MARK in url and not visible(page, EMAIL) and not visible(page, PASSWORD):
-            return "signed_in", ""
-
         if visible(page, CAPTCHA):
             return "verification", "Amazon is showing a picture puzzle. Solve it once through the box's screen viewer."
+
+        if "/ap/" not in url and SITE_MARK in url and not visible(page, EMAIL) and not visible(page, PASSWORD):
+            greeting = ""
+            try:
+                greeting = page.locator("#nav-link-accountList-nav-line-1").first.inner_text(timeout=3000).strip().lower()
+            except Exception:
+                pass
+            if REQUIRE_GREETING and "sign in" in greeting:
+                return "needs_sign_in", "Amazon opened a page without the account's name on it, so sign-in could not be confirmed."
+            return "signed_in", ""
 
         if visible(page, ERROR_BOX):
             message = " ".join(page.locator(ERROR_BOX).first.inner_text().split())[:200]
@@ -298,66 +308,345 @@ def restore_stderr(saved):
     return detail
 
 
-def sign_in_job(label):
+class Stop(Exception):
+    """A clean, explained stop: the message is shown to the operator as is."""
+
+
+def run_in_account_browser(label, note, work):
+    """Opens the account's own Kameleo browser on its dedicated proxy, runs `work(page, secrets)`, and always
+    takes a screenshot and closes the profile afterwards. Returns (result, error text, screenshot, outgoing ip)."""
     profile_id = ""
-    state, error, shot, exit_ip = "", "", "", ""
-    stage = "getting ready"
+    result, error, shot, exit_ip = None, "", "", ""
+    stage = ["getting ready"]
     saved_stderr = capture_stderr()
     try:
-        current_job["text"] = "signing in " + label
-        report(label, note="getting ready", error="")
         secrets = call("/api/worker/v1/accounts/secrets", {"account": label})
         if not secrets.get("password"):
-            raise RuntimeError("No Amazon password is saved for this account.")
+            raise Stop("No Amazon password is saved for this account.")
         if not secrets.get("proxy") or not secrets["proxy"].get("host"):
-            raise RuntimeError("No dedicated proxy is attached to this account.")
+            raise Stop("No dedicated proxy is attached to this account.")
 
-        stage = "installing the remote control"
+        stage[0] = "installing the remote control"
         ensure_playwright()
         from playwright.sync_api import sync_playwright
 
         box_ip = direct_ip()
-        stage = "creating the device identity"
+        stage[0] = "creating the device identity"
         profile_id = ensure_profile(label, secrets)
-        report(label, note="opening the browser (the first time downloads it, a few minutes)")
+        note("opening the browser")
 
-        stage = "starting the remote control"
+        stage[0] = "starting the remote control"
         with sync_playwright() as playwright:
-            stage = "connecting to the Kameleo browser"
+            stage[0] = "connecting to the Kameleo browser"
             endpoint = "ws://" + KAMELEO.split("://", 1)[1] + "/playwright/" + profile_id
             browser = playwright.chromium.connect_over_cdp(endpoint_url=endpoint, timeout=600000)
-            stage = "opening a page"
+            stage[0] = "opening a page"
             context = browser.contexts[0]
             page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(30000)
             try:
-                stage = "checking the proxy"
-                report(label, note="checking the proxy")
+                stage[0] = "checking the proxy"
+                note("checking the proxy")
                 page.goto("https://api.ipify.org/?format=text", wait_until="domcontentloaded", timeout=60000)
                 exit_ip = page.inner_text("body").strip()[:45]
                 if not exit_ip or (box_ip and exit_ip == box_ip):
-                    raise RuntimeError("The proxy is not being used (the browser shows this box's own address). Stopped before opening Amazon.")
-                report(label, exit_ip=exit_ip, note="proxy ok, opening Amazon")
-                stage = "signing in on Amazon"
-                state, error = amazon_sign_in(page, label, secrets)
+                    raise Stop("The proxy is not being used (the browser shows this box's own address). Stopped before opening Amazon.")
+                report(label, exit_ip=exit_ip)
+                result = work(page, secrets, stage)
             finally:
                 shot = snap(page)
+    except Stop as stop:
+        error = str(stop)[:400]
     except Exception as failure:
-        state = state or "needs_sign_in"
-        error = error or ("While " + stage + ": " + str(failure)[:300])
-        log("sign-in for " + label + " stopped: " + error)
+        error = "While " + stage[0] + ": " + str(failure)[:300]
     finally:
         low_level = restore_stderr(saved_stderr)
-        if error and low_level:
+        if error and low_level and not error.startswith(("Amazon", "No ", "The proxy", "This item", "Out of stock")):
             error = error + " | details: " + low_level
-            log("details: " + low_level)
         if profile_id:
             try:
                 kameleo("POST", "/profiles/" + profile_id + "/stop", {})
             except Exception as failure:
                 log("could not stop the profile cleanly: " + str(failure)[:200])
+    return result, error, shot, exit_ip
+
+
+def sign_in_job(label):
+    try:
+        current_job["text"] = "signing in " + label
+        report(label, note="getting ready", error="")
+
+        def work(page, secrets, stage):
+            stage[0] = "signing in on Amazon"
+            return amazon_sign_in(page, label, secrets)
+
+        result, error, shot, _ = run_in_account_browser(label, lambda text: report(label, note=text), work)
+        state, reason = result if result else ("needs_sign_in", "")
+        error = error or reason
         report(label, session_state=state, error=error, note="signed in" if state == "signed_in" else "sign-in did not finish", screenshot=shot, done=True)
         log("sign-in for " + label + " finished: " + state + (" (" + error + ")" if error else ""))
+    finally:
+        current_job["text"] = ""
+        job_lock.release()
+
+
+# ---------------------------------------------------------------- cart-only run (never places an order)
+#
+# This worker has no "place order" step. It clears the cart, adds the item, saves the buyer's address as the
+# default delivery address, opens checkout, reads the totals, takes a screenshot, and stops.
+
+CART_PAGE = "https://www.amazon.com/gp/cart/view.html"
+ADD_ADDRESS_PAGE = "https://www.amazon.com/a/addresses/add?ref=ya_address_book_add_button"
+NEVER_CLICK = ("place your order", "place order", "buy now", "placeyourorder", "turbo-checkout")
+
+STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado", "CT": "Connecticut",
+    "DE": "Delaware", "DC": "District of Columbia", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois",
+    "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska",
+    "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island",
+    "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia",
+    "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+}
+
+
+def safe_click(page, selectors):
+    """Clicks the first visible match, but refuses anything that looks like a buy button."""
+    for selector in selectors:
+        if not visible(page, selector):
+            continue
+        target = page.locator(selector).first
+        try:
+            described = " ".join([
+                target.inner_text(timeout=2000) or "",
+                target.get_attribute("value") or "",
+                target.get_attribute("name") or "",
+                target.get_attribute("aria-label") or "",
+                target.get_attribute("id") or "",
+            ]).lower()
+        except Exception:
+            described = ""
+        if any(word in described for word in NEVER_CLICK):
+            raise Stop("Refused to click a buy button (" + selector + "). This run never places orders.")
+        target.click()
+        return True
+    return False
+
+
+def settle(page):
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=45000)
+    except Exception:
+        pass
+    pause(1.5, 3.0)
+
+
+def pass_sign_in_wall(page, label, secrets):
+    """Amazon sometimes asks for the password again before the cart, address book, or checkout."""
+    for _ in range(4):
+        if visible(page, CAPTCHA):
+            raise Stop("Amazon is showing a picture puzzle. Solve it once through the box's screen viewer.")
+        if "/ap/" not in page.url:
+            return
+        if visible(page, OTP):
+            code = call("/api/worker/v1/totp", {"account": label})
+            human_type(page, OTP, code["code"])
+            click_first(page, ["#auth-signin-button", "input[type='submit']"])
+        elif visible(page, PASSWORD):
+            human_type(page, PASSWORD, secrets["password"])
+            click_first(page, ["#signInSubmit", "input[type='submit']"])
+        elif visible(page, EMAIL):
+            human_type(page, EMAIL, secrets["login_email"])
+            click_first(page, ["input#continue", "#continue input", "#continue", "input[type='submit']"])
+        else:
+            raise Stop("Amazon wants extra verification before continuing.")
+        settle(page)
+    if "/ap/" in page.url:
+        raise Stop("Amazon kept asking to sign in again.")
+
+
+def clear_cart(page, label, secrets):
+    page.goto(CART_PAGE, wait_until="domcontentloaded", timeout=90000)
+    settle(page)
+    pass_sign_in_wall(page, label, secrets)
+    for _ in range(20):
+        if not safe_click(page, ["input[data-action='delete']", "span[data-action='delete'] input", "input[value='Delete']", "input[name^='submit.delete']"]):
+            break
+        pause(1.5, 2.5)
+
+
+def add_to_cart(page, order):
+    page.goto("https://www.amazon.com/dp/" + order["asin"] + "?th=1&psc=1", wait_until="domcontentloaded", timeout=90000)
+    settle(page)
+    if visible(page, CAPTCHA):
+        raise Stop("Amazon is showing a picture puzzle on the product page.")
+    if not visible(page, "#add-to-cart-button"):
+        availability = ""
+        try:
+            availability = " ".join(page.locator("#availability").first.inner_text(timeout=3000).split())[:120]
+        except Exception:
+            pass
+        raise Stop("Out of stock or not sold directly: no Add to Cart button on this item." + (" Amazon says: " + availability if availability else ""))
+    quantity = int(order.get("quantity") or 1)
+    if quantity > 1 and visible(page, "select#quantity"):
+        try:
+            page.locator("select#quantity").first.select_option(str(quantity))
+            pause()
+        except Exception:
+            pass
+    safe_click(page, ["#add-to-cart-button"])
+    settle(page)
+    # Decline the protection-plan offer if it appears.
+    safe_click(page, ["#attachSiNoCoverage input", "#attachSiNoCoverage", "input[aria-labelledby='attachSiNoCoverage-announce']", "#siNoCoverage-announce"])
+    pause()
+
+
+def fill_field(page, selector, value):
+    if value and visible(page, selector):
+        human_type(page, selector, value)
+        return True
+    return False
+
+
+def add_address(page, label, secrets, ship):
+    page.goto(ADD_ADDRESS_PAGE, wait_until="domcontentloaded", timeout=90000)
+    settle(page)
+    pass_sign_in_wall(page, label, secrets)
+    if "/a/addresses/add" not in page.url:
+        page.goto(ADD_ADDRESS_PAGE, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+    prefix = "#address-ui-widgets-enterAddress"
+    if not fill_field(page, prefix + "FullName", ship["name"]):
+        raise Stop("Amazon's add-address form did not load as expected.")
+    fill_field(page, prefix + "PhoneNumber", ship.get("phone") or "5125550100")
+    fill_field(page, prefix + "Line1", ship["line1"])
+    pause(0.5, 1.0)
+    page.keyboard.press("Escape")  # close the address suggestions dropdown
+    fill_field(page, prefix + "Line2", ship.get("line2") or "")
+    fill_field(page, prefix + "City", ship["city"])
+    state = (ship.get("state") or "").upper()
+    picked = False
+    for selector in ["select#address-ui-widgets-enterAddressStateOrRegion-dropdown-nativeId", "select[name='address-ui-widgets-enterAddressStateOrRegion']"]:
+        try:
+            if page.locator(selector).count() > 0:
+                page.locator(selector).first.select_option(state, force=True)
+                picked = True
+                break
+        except Exception:
+            continue
+    if not picked and visible(page, "#address-ui-widgets-enterAddressStateOrRegion"):
+        page.locator("#address-ui-widgets-enterAddressStateOrRegion").first.click()
+        pause()
+        option = page.locator("a.a-dropdown-link", has_text=STATES.get(state, state)).first
+        if option.is_visible():
+            option.click()
+            picked = True
+    if not picked:
+        raise Stop("Could not choose the state on Amazon's address form.")
+    fill_field(page, prefix + "PostalCode", ship["postal_code"])
+    # Make it the default so checkout ships to the buyer without another choice.
+    for selector in ["#address-ui-widgets-use-as-my-default", "input[name='address-ui-widgets-use-as-my-default']"]:
+        try:
+            if page.locator(selector).count() > 0:
+                page.locator(selector).first.check(force=True)
+                break
+        except Exception:
+            continue
+    pause()
+    if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']"]):
+        raise Stop("Could not find the save button on Amazon's address form.")
+    settle(page)
+    # Amazon may suggest a corrected address. Keep what the buyer gave.
+    safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"])
+    settle(page)
+    if "/a/addresses/add" in page.url and visible(page, ".a-alert-error, .a-box.a-alert-inline-error, [id*='address-ui-widgets'][id*='error']"):
+        message = ""
+        try:
+            message = " ".join(page.locator(".a-alert-error, .a-box.a-alert-inline-error").first.inner_text(timeout=3000).split())[:200]
+        except Exception:
+            pass
+        raise Stop("Address not found: Amazon did not accept the buyer's address." + (" Amazon says: " + message if message else ""))
+
+
+def read_totals(page):
+    import re
+
+    text = ""
+    for selector in ["#subtotals-marketplace-table", "#subtotals", "[data-testid='order-summary']", "#spc-order-summary", "#checkout-order-summary"]:
+        try:
+            if page.locator(selector).count() > 0:
+                text = " ".join(page.locator(selector).first.inner_text(timeout=4000).split())
+                if text:
+                    break
+        except Exception:
+            continue
+    totals = {"raw": text[:400]}
+
+    def money(pattern):
+        match = re.search(pattern + r"[^$]*\$\s*([0-9,]+\.[0-9]{2})", text, re.I)
+        return float(match.group(1).replace(",", "")) if match else None
+
+    totals["items"] = money(r"items?(?:\s*\(\d+\))?:?")
+    totals["shipping"] = money(r"shipping(?: & handling)?:?")
+    totals["tax"] = money(r"(?<!before )(?:estimated )?tax(?: to be collected)?:?")
+    totals["total"] = money(r"order total:?")
+    return totals
+
+
+def cart_only_job(job):
+    order_id = job["id"]
+    label = job.get("account_label") or ""
+
+    def progress(**fields):
+        try:
+            call("/api/worker/v1/orders/" + order_id + "/progress", fields)
+        except Exception as failure:
+            log("could not report on order " + job.get("order_number", "") + ": " + str(failure))
+
+    try:
+        current_job["text"] = "cart run " + job.get("order_number", "")
+        progress(note="getting ready")
+        order = call("/api/worker/v1/orders/" + order_id + "/details", {})
+        ship = order["ship_to"]
+
+        def work(page, secrets, stage):
+            stage[0] = "checking the Amazon sign-in"
+            progress(note="checking the sign-in")
+            state, reason = amazon_sign_in(page, label, secrets)
+            if state != "signed_in":
+                report(label, session_state=state, error=reason)
+                raise Stop("The account is not signed in. " + reason)
+            stage[0] = "clearing the cart"
+            progress(note="clearing the cart")
+            clear_cart(page, label, secrets)
+            stage[0] = "adding the item to the cart"
+            progress(note="adding the item to the cart")
+            add_to_cart(page, order)
+            stage[0] = "adding the buyer's address"
+            progress(note="adding the buyer's address")
+            add_address(page, label, secrets, ship)
+            stage[0] = "opening checkout"
+            progress(note="opening checkout")
+            page.goto(CART_PAGE, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            if not safe_click(page, ["input[name='proceedToRetailCheckout']", "#sc-buy-box-ptc-button input"]):
+                raise Stop("The cart is empty or the checkout button is missing.")
+            settle(page)
+            pass_sign_in_wall(page, label, secrets)
+            settle(page)
+            stage[0] = "reading the totals"
+            return read_totals(page)
+
+        totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
+        if error:
+            progress(done=True, error=error, note="stopped", screenshot=shot)
+        else:
+            progress(done=True, note="cart ready · address added · not ordered", screenshot=shot, checkout=totals or {})
+        log("cart run " + job.get("order_number", "") + " finished" + (": " + error if error else ""))
+    except Exception as failure:
+        progress(done=True, error="The cart run could not start: " + str(failure)[:200], note="stopped")
+    finally:
         current_job["text"] = ""
         job_lock.release()
 
@@ -385,11 +674,19 @@ def main():
             state = current_job["text"] or kameleo_state()
             reply = call("/api/worker/v1/heartbeat", {"version": VERSION, "hostname": socket.gethostname(), "state": state})
             if reply.get("desired_state") != "pause":
+                started = False
                 for account in reply.get("accounts", []):
                     if account.get("signin_requested") and job_lock.acquire(blocking=False):
                         log("sign-in requested for " + account["label"])
                         threading.Thread(target=sign_in_job, args=(account["label"],), daemon=True).start()
+                        started = True
                         break
+                if not started:
+                    for job in reply.get("order_jobs", []):
+                        if job.get("run_kind") == "cart_only" and job_lock.acquire(blocking=False):
+                            log("cart run requested for " + str(job.get("order_number")))
+                            threading.Thread(target=cart_only_job, args=(job,), daemon=True).start()
+                            break
         except urllib.error.HTTPError as error:
             log("DiceDrop answered " + str(error.code) + ". " + error.read().decode()[:200])
         except Exception as error:

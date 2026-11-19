@@ -15,6 +15,15 @@ export interface Named {
 
 export interface OpsOrder {
   id: string;
+  run_requested_at: string | null;
+  run_kind: string | null;
+  run_note: string | null;
+  checkout: { items?: number | null; shipping?: number | null; tax?: number | null; total?: number | null; raw?: string } | null;
+  ship_name: string | null;
+  ship_line1: string | null;
+  ship_city: string | null;
+  ship_postal: string | null;
+  snapshot_at: string | null;
   status: OrderStatus;
   cancel_requested: boolean;
   source: string;

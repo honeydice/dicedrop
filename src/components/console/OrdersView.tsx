@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { money, timeAgo } from '@/lib/format';
 import type { OpsOrder, OpsOrders, OrderStatus } from '@/lib/types';
-import { Badge, Card, ErrorNote, field, PageHead, Tile } from './ui';
+import { Badge, btn, btnAccent, Card, ErrorNote, field, label, PageHead, Tile } from './ui';
 import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 
@@ -69,6 +69,28 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState('');
   const [busy, setBusy] = useState('');
+  const [testOpen, setTestOpen] = useState(false);
+  const [test, setTest] = useState({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '' });
+  const [shot, setShot] = useState<{ title: string; taken_at: string; note: string | null; image: string } | null>(null);
+
+  const rpc = async (id: string, fn: string, args: Record<string, unknown>): Promise<unknown | null> => {
+    setBusy(id);
+    setError('');
+    try {
+      const { data: result, error: rpcError } = await supabase.rpc(fn, args);
+      if (rpcError) {
+        setError(rpcError.message);
+        return null;
+      }
+      await refresh();
+      return result ?? true;
+    } catch {
+      setError('That did not go through. Try again.');
+      return null;
+    } finally {
+      setBusy('');
+    }
+  };
   const [live, setLive] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -147,6 +169,84 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
         </div>
       </PageHead>
 
+      <div className="mb-4">
+        <button type="button" className={btn} onClick={() => setTestOpen(!testOpen)}>
+          {testOpen ? 'Close test order' : 'New test order'}
+        </button>
+      </div>
+
+      {testOpen ? (
+        <div className="mb-5">
+          <Card title="POST /orders (test)">
+            <form
+              className="grid gap-3 px-5 py-4 sm:grid-cols-6"
+              autoComplete="off"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const ok = await rpc('new', 'dd_ops_create_test_order', { p: test });
+                if (ok) {
+                  setTest({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '' });
+                  setTestOpen(false);
+                  setTab('all');
+                }
+              }}
+            >
+              {(
+                [
+                  ['item', 'Amazon link or ASIN', 'sm:col-span-5', 'https://www.amazon.com/dp/B0XXXXXXXX'],
+                  ['quantity', 'Qty', 'sm:col-span-1', '1'],
+                  ['ship_name', 'Buyer full name', 'sm:col-span-3', ''],
+                  ['ship_phone', 'Phone (optional)', 'sm:col-span-3', ''],
+                  ['ship_line1', 'Address line 1', 'sm:col-span-4', ''],
+                  ['ship_line2', 'Apt / unit (optional)', 'sm:col-span-2', ''],
+                  ['ship_city', 'City', 'sm:col-span-3', ''],
+                  ['ship_state', 'State (2 letters)', 'sm:col-span-1', 'TX'],
+                  ['ship_postal', 'Zip', 'sm:col-span-2', ''],
+                ] as const
+              ).map(([key, text, span, hint]) => (
+                <div key={key} className={span}>
+                  <label htmlFor={`t-${key}`} className={label}>
+                    {text}
+                  </label>
+                  <input
+                    id={`t-${key}`}
+                    value={test[key]}
+                    placeholder={hint}
+                    maxLength={key === 'ship_state' ? 2 : key === 'item' ? 400 : 80}
+                    onChange={(e) => setTest({ ...test, [key]: e.target.value })}
+                    className={`${field} ${key === 'item' ? 'font-mono' : ''}`}
+                  />
+                </div>
+              ))}
+              <div className="flex items-center gap-3 sm:col-span-6">
+                <button type="submit" disabled={busy === 'new'} className={btnAccent}>
+                  Add to queue
+                </button>
+                <span className="font-mono text-xs text-muted">added as held · nothing runs until you click order now</span>
+              </div>
+            </form>
+          </Card>
+        </div>
+      ) : null}
+
+      {shot ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:p-10" onMouseDown={(e) => e.target === e.currentTarget && setShot(null)}>
+          <div role="dialog" aria-modal="true" aria-label={`Screenshot for ${shot.title}`} className="w-full max-w-5xl overflow-hidden rounded-2xl border border-line bg-panel">
+            <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+              <div className="font-mono text-[13px] text-muted">
+                screenshot · {shot.title} · {new Date(shot.taken_at).toLocaleString()}
+                {shot.note ? ` · ${shot.note}` : ''}
+              </div>
+              <button type="button" className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-muted hover:text-fg" onClick={() => setShot(null)}>
+                close
+              </button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`data:image/jpeg;base64,${shot.image}`} alt={`What the worker saw on ${shot.title}`} className="block w-full" />
+          </div>
+        </div>
+      ) : null}
+
       <section aria-label="Spend" className="mb-5 flex flex-wrap gap-3">
         <Tile label="Spent today" value={money(Number(data.spent_today))} />
         <Tile
@@ -214,6 +314,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                     {o.quantity > 1 ? ` ×${o.quantity}` : ''}
                     {who ? ` · ${who}` : ''}
                   </span>
+                  {o.run_note ? <span className="mt-1 block font-mono text-xs text-accent">{o.run_note}</span> : null}
                   {o.issue_reason ? <span className="mt-1 block text-[13px] text-bad">{o.issue_reason}</span> : null}
                   {o.cancel_requested ? <span className="mt-1 block text-[13px] text-warn">cancel requested</span> : null}
                 </span>
@@ -243,7 +344,11 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                       ['cost', placed ? money(o.buy_cost) : o.est_cost !== null ? `est. ${money(o.est_cost)}` : '—'],
                       ['profit', money(profit)],
                       ['tracking', o.tracking_number ?? '—'],
-                      ['ship_state', o.ship_state ?? '—'],
+                      ['ship_to', [o.ship_name, o.ship_line1, o.ship_city, o.ship_state, o.ship_postal].filter(Boolean).join(', ') || '—'],
+                      ['checkout_items', o.checkout?.items != null ? money(o.checkout.items) : '—'],
+                      ['checkout_shipping', o.checkout?.shipping != null ? money(o.checkout.shipping) : '—'],
+                      ['checkout_tax', o.checkout?.tax != null ? money(o.checkout.tax) : '—'],
+                      ['checkout_total', o.checkout?.total != null ? money(o.checkout.total) : '—'],
                     ].map(([k, v]) => (
                       <div key={k}>
                         <dt className="text-muted">{k}</dt>
@@ -252,6 +357,30 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                     ))}
                   </dl>
                   <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy === o.id || !['held', 'pending', 'issue'].includes(o.status)}
+                      onClick={() => void rpc(o.id, 'dd_ops_order_now', { p_order: o.id })}
+                      className={btnAccent}
+                      title="Cart only: adds the item and the buyer's address, opens checkout, takes a screenshot. Does not buy."
+                    >
+                      {o.status === 'ordering' && o.run_requested_at ? 'Running' : 'Order now (cart only)'}
+                    </button>
+                    {o.snapshot_at ? (
+                      <button
+                        type="button"
+                        disabled={busy === o.id}
+                        className={btn}
+                        onClick={async () => {
+                          const { data: result } = await supabase.rpc('dd_ops_order_snapshot', { p_order: o.id });
+                          const r = result as { taken_at: string; note: string | null; image: string } | null;
+                          if (r) setShot({ title: o.order_number, ...r });
+                          else setError('That screenshot could not be loaded. Try again.');
+                        }}
+                      >
+                        View screenshot
+                      </button>
+                    ) : null}
                     {(['retry', 'hold', 'cancel'] as Action[]).map((a) => (
                       <button
                         key={a}
