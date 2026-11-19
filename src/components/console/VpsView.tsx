@@ -38,6 +38,9 @@ function specs(b: OpsBox): string {
   return parts.join(' / ');
 }
 
+// Boxes always install from the public address, whichever address the console is open on.
+const SITE_URL = 'https://dicedrop.vercel.app';
+
 export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBoxes; initialError: string; perBox?: number }) {
   const { data, error, setError, refresh } = useLive<OpsBoxes>('dd_ops_boxes', undefined, initial, initialError, 5000);
   const { shown: shownBoxes, pager } = usePaged(data.boxes);
@@ -46,7 +49,7 @@ export function VpsView({ initial, initialError, perBox = 5 }: { initial: OpsBox
   const [token, setToken] = useState<{ box: string; value: string } | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const installCommand = (value: string) =>
-    `curl -fsSL ${typeof window === 'undefined' ? '' : window.location.origin}/dd/install.sh | sudo bash -s -- ${value}`;
+    `curl -fsSL ${SITE_URL}/dd/install.sh | sudo bash -s -- ${value}`;
   const [open, setOpen] = useState('');
 
   const run = async (work: () => Promise<Result>): Promise<Result | null> => {
