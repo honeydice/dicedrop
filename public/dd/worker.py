@@ -4,8 +4,10 @@ What it does:
   * checks in with DiceDrop every 15 seconds and reports whether Kameleo is up
   * when the operator asks, signs one of this box's accounts in to Amazon through that account's own
     Kameleo profile and dedicated proxy, then reports the result and a screenshot
-  * when the operator clicks "Order now", does a cart-only run: item in cart, buyer address added, checkout opened,
-    totals read, screenshot taken. It never places an order.
+  * when the operator clicks "Order now (cart only)": item in cart, buyer address added, gift note added,
+    totals read, screenshot taken. Nothing is bought.
+  * when the operator clicks "Place order (real)": the same steps, then the order is placed once and the
+    confirmation page is captured.
 The box only ever calls out. It picks up new versions of this file on its own.
 """
 import base64
@@ -21,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.11.1"
+VERSION = "0.12.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -572,9 +574,10 @@ def sign_in_job(label):
 
 # ---------------------------------------------------------------- cart-only run (never places an order)
 #
-# This worker has no "place order" step. It clears the cart, adds the item, opens checkout, adds the buyer's
-# address there (Change -> Add a new delivery address -> Use this address), reads the totals, takes a
-# screenshot, and stops.
+# A cart-only run clears the cart, adds the item, opens checkout, adds the buyer's address there
+# (Change -> Add a new delivery address -> Use this address), adds the gift note, reads the totals, takes a
+# screenshot, and stops. A "place_order" run does the same and then buys, through place_order() and nothing else.
+# Every general-purpose click helper refuses buy buttons.
 
 CART_PAGE = "https://www.amazon.com/gp/cart/view.html"
 NEVER_CLICK = ("place your order", "place order", "buy now", "placeyourorder", "turbo-checkout")
@@ -1020,6 +1023,49 @@ def add_gift(page, gift):
     return "gift added" + ("" if sender is not None or not who else " (sender written into the message)")
 
 
+def place_order(page):
+    """The ONLY place in this worker that buys. It runs only for a "place_order" run, and clicks the button once.
+    Returns the Amazon order number. After the click nothing is retried, so an order can never be placed twice."""
+    import re
+
+    expected = ""
+    match = re.search(r"p-(\d{3}-\d{7}-\d{7})", page.url)
+    if match:
+        expected = match.group(1)
+    button = first_visible(page, "#placeOrder, input[name='placeYourOrder1']")
+    if button is None:
+        raise Stop("Could not find Amazon's Place your order button. Nothing was ordered." + describe(page))
+    current_job["place_clicked"] = True
+    button.click()
+
+    confirmed = False
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        time.sleep(1)
+        try:
+            address = page.url.lower()
+            words = page_words(page, 600).lower()
+        except Exception:
+            continue
+        if "thankyou" in address or "order placed" in words or "your order has been placed" in words or "thank you, your order" in words:
+            confirmed = True
+            break
+        if "duplicate order" in words:
+            current_job["place_clicked"] = False
+            raise Stop("Amazon says this would be a duplicate of a recent order and is asking to confirm. Nothing was ordered." + describe(page))
+    if not confirmed:
+        raise Stop("Place your order was clicked, but Amazon's confirmation page did not appear. The order MAY have been placed. Check the Amazon account before trying again." + describe(page))
+    settle(page)
+    found = []
+    try:
+        found = re.findall(r"\b\d{3}-\d{7}-\d{7}\b", page.url + " " + page.content())
+    except Exception:
+        pass
+    if expected and (expected in found or not found):
+        return expected
+    return found[0] if found else expected
+
+
 def read_totals(page):
     import re
 
@@ -1058,6 +1104,7 @@ def cart_only_job(job):
     try:
         current_job["text"] = "cart run " + job.get("order_number", "")
         current_job["whole_page"] = True
+        current_job["place_clicked"] = False
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
         ship = order["ship_to"]
@@ -1114,13 +1161,29 @@ def cart_only_job(job):
             pause()
             totals = read_totals(page)
             totals["gift"] = gift_note
+            if order.get("run_kind") == "place_order":
+                if totals.get("total") is None:
+                    raise Stop("Could not read the order total at checkout, so the order was not placed." + describe(page))
+                stage[0] = "placing the order"
+                progress(note="placing the order · total $" + format(totals["total"], ".2f"))
+                totals["amazon_order_id"] = place_order(page)
+                totals["placed"] = True
+                try:
+                    page.evaluate("window.scrollTo(0, 0)")
+                except Exception:
+                    pass
             return totals
 
         totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
+        totals = totals or {}
         if error:
-            progress(done=True, error=error, note="stopped", screenshot=shot)
+            progress(done=True, error=error, note="stopped", screenshot=shot, place_uncertain=bool(current_job.get("place_clicked")))
+        elif totals.get("placed"):
+            order_id = totals.pop("amazon_order_id", "") or ""
+            totals.pop("placed", None)
+            progress(done=True, placed=True, amazon_order_id=order_id, note="ordered · " + (order_id or "order number not shown") + " · " + str(totals.get("gift", "")), screenshot=shot, checkout=totals)
         else:
-            progress(done=True, note="cart ready · address added · " + str((totals or {}).get("gift", "gift step skipped")) + " · not ordered", screenshot=shot, checkout=totals or {})
+            progress(done=True, note="cart ready · address added · " + str(totals.get("gift", "gift step skipped")) + " · not ordered", screenshot=shot, checkout=totals)
         log("cart run " + job.get("order_number", "") + " finished" + (": " + error if error else ""))
     except Exception as failure:
         progress(done=True, error="The cart run could not start: " + str(failure)[:200], note="stopped")
@@ -1162,8 +1225,8 @@ def main():
                         break
                 if not started:
                     for job in reply.get("order_jobs", []):
-                        if job.get("run_kind") == "cart_only" and job_lock.acquire(blocking=False):
-                            log("cart run requested for " + str(job.get("order_number")))
+                        if job.get("run_kind") in ("cart_only", "place_order") and job_lock.acquire(blocking=False):
+                            log(str(job.get("run_kind")) + " run requested for " + str(job.get("order_number")))
                             threading.Thread(target=cart_only_job, args=(job,), daemon=True).start()
                             break
         except urllib.error.HTTPError as error:
