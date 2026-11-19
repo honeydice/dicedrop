@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.9"
+VERSION = "0.10.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -571,11 +571,11 @@ def sign_in_job(label):
 
 # ---------------------------------------------------------------- cart-only run (never places an order)
 #
-# This worker has no "place order" step. It clears the cart, adds the item, saves the buyer's address as the
-# default delivery address, opens checkout, reads the totals, takes a screenshot, and stops.
+# This worker has no "place order" step. It clears the cart, adds the item, opens checkout, adds the buyer's
+# address there (Change -> Add a new delivery address -> Use this address), reads the totals, takes a
+# screenshot, and stops.
 
 CART_PAGE = "https://www.amazon.com/gp/cart/view.html"
-ADD_ADDRESS_PAGE = "https://www.amazon.com/a/addresses/add?ref=ya_address_book_add_button"
 NEVER_CLICK = ("place your order", "place order", "buy now", "placeyourorder", "turbo-checkout")
 
 STATES = {
@@ -688,22 +688,84 @@ def fill_field(page, selector, value):
     return False
 
 
-def add_address(page, label, secrets, ship):
-    page.goto(ADD_ADDRESS_PAGE, wait_until="domcontentloaded", timeout=90000)
-    settle(page)
-    pass_sign_in_wall(page, label, secrets)
-    if "/a/addresses/add" not in page.url:
-        page.goto(ADD_ADDRESS_PAGE, wait_until="domcontentloaded", timeout=90000)
-        settle(page)
+def fill_by(page, selectors, label_text, value, required=True):
+    """Fills a form field found by its id, or failing that by the label a person reads next to it."""
+    if not value:
+        return True
+    target = None
+    for selector in selectors:
+        target = first_visible(page, selector)
+        if target is not None:
+            break
+    if target is None:
+        try:
+            candidate = page.get_by_label(label_text, exact=False).first
+            if candidate.is_visible():
+                target = candidate
+        except Exception:
+            target = None
+    if target is None:
+        if required:
+            raise Stop("Could not find the \"" + label_text + "\" field on Amazon's address form." + describe(page))
+        return False
+    target.click()
+    pause(0.2, 0.5)
+    target.fill("")
+    target.press_sequentially(value, delay=random.randint(60, 130))
+    pause(0.4, 0.9)
+    return True
+
+
+def delivery_change_link(page):
+    """The "Change" link that belongs to the delivery address, never the one next to the payment method."""
+    for selector in ["#addressChangeLinkId", "a[data-testid='Address_selectChangeAddress']", "[data-testid*='address' i] a:has-text('Change')"]:
+        target = first_visible(page, selector)
+        if target is not None:
+            return target
+    try:
+        heading = page.get_by_text("Delivering to", exact=False).first
+        if heading.is_visible():
+            panel = heading.locator("xpath=ancestor::div[.//a[normalize-space()='Change']][1]")
+            link = panel.locator("a", has_text="Change").first
+            if link.is_visible():
+                return link
+    except Exception:
+        pass
+    return None
+
+
+def add_address_at_checkout(page, ship):
+    """On the checkout page: Change (delivery) -> Add a new delivery address -> fill the form -> Use this address."""
     prefix = "#address-ui-widgets-enterAddress"
-    if not fill_field(page, prefix + "FullName", ship["name"]):
-        raise Stop("Amazon's add-address form did not load as expected." + describe(page))
-    fill_field(page, prefix + "PhoneNumber", ship.get("phone") or "5125550100")
-    fill_field(page, prefix + "Line1", ship["line1"])
-    pause(0.5, 1.0)
-    page.keyboard.press("Escape")  # close the address suggestions dropdown
-    fill_field(page, prefix + "Line2", ship.get("line2") or "")
-    fill_field(page, prefix + "City", ship["city"])
+    add_new = ["#add-new-address-popover-link", "#add-new-address-desktop-sasp-tango-link", "a:has-text('Add a new delivery address')", "a:has-text('Add a new address')"]
+    form_open = lambda: visible(page, prefix + "FullName") or visible(page, prefix + "Line1")
+
+    if not form_open():
+        if not any(visible(page, selector) for selector in add_new):
+            link = delivery_change_link(page)
+            if link is None:
+                raise Stop("Could not find the delivery \"Change\" link on Amazon's checkout page." + describe(page))
+            link.click()
+            settle(page)
+        if not form_open() and not safe_click(page, add_new):
+            raise Stop("Could not find \"Add a new delivery address\" on Amazon's checkout page." + describe(page))
+        for _ in range(20):
+            if form_open():
+                break
+            time.sleep(0.5)
+    pause(1.0, 2.0)
+
+    fill_by(page, [prefix + "FullName"], "Full name", ship["name"])
+    fill_by(page, [prefix + "PhoneNumber"], "Phone number", ship.get("phone") or "5125550100", required=False)
+    fill_by(page, [prefix + "Line1"], "Street address", ship["line1"])
+    pause(0.6, 1.0)
+    page.keyboard.press("Escape")  # close Amazon's address suggestions list without closing the form
+    pause(0.3, 0.6)
+    if not form_open():
+        raise Stop("Amazon's address form closed while it was being filled in." + describe(page))
+    fill_by(page, [prefix + "Line2"], "Unit or suite number", ship.get("line2") or "", required=False)
+    fill_by(page, [prefix + "City"], "City", ship["city"])
+
     state = (ship.get("state") or "").upper()
     picked = False
     for selector in ["select#address-ui-widgets-enterAddressStateOrRegion-dropdown-nativeId", "select[name='address-ui-widgets-enterAddressStateOrRegion']"]:
@@ -714,8 +776,15 @@ def add_address(page, label, secrets, ship):
                 break
         except Exception:
             continue
+    if not picked:
+        try:
+            box = page.get_by_label("State", exact=True).first
+            box.select_option(state)
+            picked = True
+        except Exception:
+            pass
     if not picked and visible(page, "#address-ui-widgets-enterAddressStateOrRegion"):
-        page.locator("#address-ui-widgets-enterAddressStateOrRegion").first.click()
+        first_visible(page, "#address-ui-widgets-enterAddressStateOrRegion").click()
         pause()
         option = page.locator("a.a-dropdown-link", has_text=STATES.get(state, state)).first
         if option.is_visible():
@@ -723,29 +792,38 @@ def add_address(page, label, secrets, ship):
             picked = True
     if not picked:
         raise Stop("Could not choose the state on Amazon's address form." + describe(page))
-    fill_field(page, prefix + "PostalCode", ship["postal_code"])
-    # Make it the default so checkout ships to the buyer without another choice.
-    for selector in ["#address-ui-widgets-use-as-my-default", "input[name='address-ui-widgets-use-as-my-default']"]:
-        try:
-            if page.locator(selector).count() > 0:
-                page.locator(selector).first.check(force=True)
-                break
-        except Exception:
-            continue
+    pause(0.4, 0.8)
+    fill_by(page, [prefix + "PostalCode"], "ZIP Code", ship["postal_code"])
     pause()
-    if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']"]):
-        raise Stop("Could not find the save button on Amazon's address form." + describe(page))
+
+    if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']", "span:has-text('Use this address') input", "input[type='submit'][aria-labelledby*='submit-button']"]):
+        raise Stop("Could not find \"Use this address\" on Amazon's address form." + describe(page))
     settle(page)
     # Amazon may suggest a corrected address. Keep what the buyer gave.
-    safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"])
-    settle(page)
-    if "/a/addresses/add" in page.url and visible(page, ".a-alert-error, .a-box.a-alert-inline-error, [id*='address-ui-widgets'][id*='error']"):
+    if safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"]):
+        settle(page)
+    for _ in range(30):
+        if not form_open():
+            break
+        time.sleep(0.5)
+    if form_open():
         message = ""
         try:
-            message = " ".join(page.locator(".a-alert-error, .a-box.a-alert-inline-error").first.inner_text(timeout=3000).split())[:200]
+            message = " ".join(first_visible(page, ".a-alert-error, .a-box.a-alert-inline-error, .a-alert-inline-error").inner_text(timeout=3000).split())[:200]
         except Exception:
             pass
-        raise Stop("Address not found: Amazon did not accept the buyer's address." + (" Amazon says: " + message if message else ""))
+        raise Stop("Address not found: Amazon did not accept the buyer's address." + (" Amazon says: " + message if message else describe(page)))
+    settle(page)
+    # Some layouts return to the address list with the new one selected and a confirm button.
+    safe_click(page, ["#shipToThisAddressButton input", "input[data-testid='Address_selectShipToThisAddress']", "input[aria-labelledby='shipToThisAddressButton-announce']", "span:has-text('Deliver to this address') input"])
+    settle(page)
+    first_name = ship["name"].split()[0]
+    try:
+        body = page.locator("body").first.inner_text(timeout=6000)
+    except Exception:
+        body = ""
+    if first_name.lower() not in body.lower():
+        raise Stop("The address was sent, but the checkout page does not show the buyer's name yet." + describe(page))
 
 
 def read_totals(page):
@@ -803,9 +881,6 @@ def cart_only_job(job):
             stage[0] = "adding the item to the cart"
             progress(note="adding the item to the cart")
             add_to_cart(page, order)
-            stage[0] = "adding the buyer's address"
-            progress(note="adding the buyer's address")
-            add_address(page, label, secrets, ship)
             stage[0] = "opening checkout"
             progress(note="opening checkout")
             page.goto(CART_PAGE, wait_until="domcontentloaded", timeout=90000)
@@ -815,7 +890,18 @@ def cart_only_job(job):
             settle(page)
             pass_sign_in_wall(page, label, secrets)
             settle(page)
+            # Decline a Prime offer if Amazon puts one in the way.
+            if safe_click(page, ["#prime-declineCTA", "a#prime-declineCTA", "a:has-text('No thanks')", "input[name='prime-interstitial-decline']"]):
+                settle(page)
+            stage[0] = "adding the buyer's address at checkout"
+            progress(note="adding the buyer's address")
+            add_address_at_checkout(page, ship)
             stage[0] = "reading the totals"
+            try:
+                page.evaluate("window.scrollTo(0, 0)")
+            except Exception:
+                pass
+            pause()
             return read_totals(page)
 
         totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
