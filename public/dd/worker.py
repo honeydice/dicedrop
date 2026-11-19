@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -612,12 +612,13 @@ def cart_only_job(job):
         ship = order["ship_to"]
 
         def work(page, secrets, stage):
-            stage[0] = "checking the Amazon sign-in"
-            progress(note="checking the sign-in")
+            stage[0] = "signing in on Amazon"
+            progress(note="signing in")
             state, reason = amazon_sign_in(page, label, secrets)
             if state != "signed_in":
-                report(label, session_state=state, error=reason)
-                raise Stop("The account is not signed in. " + reason)
+                report(label, session_state=state, error=reason, note="sign-in did not finish")
+                raise Stop("Amazon sign-in did not finish. " + reason)
+            report(label, session_state="signed_in", error="", note="signed in")
             stage[0] = "clearing the cart"
             progress(note="clearing the cart")
             clear_cart(page, label, secrets)
