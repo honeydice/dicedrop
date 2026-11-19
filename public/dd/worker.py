@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -613,6 +613,23 @@ def safe_click(page, selectors):
     return False
 
 
+def click_text(page, texts):
+    """Clicks a button or link by the words a person reads on it. Never a buy button."""
+    for text in texts:
+        if any(word in text.lower() for word in NEVER_CLICK):
+            raise Stop("Refused to click \"" + text + "\". This run never places orders.")
+        try:
+            matches = page.get_by_text(text, exact=True)
+            for index in range(min(matches.count(), 5)):
+                candidate = matches.nth(index)
+                if candidate.is_visible():
+                    candidate.click()
+                    return True
+        except Exception:
+            continue
+    return False
+
+
 def settle(page):
     try:
         page.wait_for_load_state("domcontentloaded", timeout=45000)
@@ -890,9 +907,19 @@ def cart_only_job(job):
             settle(page)
             pass_sign_in_wall(page, label, secrets)
             settle(page)
-            # Decline a Prime offer if Amazon puts one in the way.
-            if safe_click(page, ["#prime-declineCTA", "a#prime-declineCTA", "a:has-text('No thanks')", "input[name='prime-interstitial-decline']"]):
-                settle(page)
+            # Amazon sometimes puts a page in between the cart and checkout. Step through up to four of them.
+            for _ in range(4):
+                if delivery_change_link(page) is not None or visible(page, "#add-new-address-popover-link") or visible(page, "#address-ui-widgets-enterAddressFullName"):
+                    break
+                if click_text(page, ["Continue to checkout", "Continue to Checkout"]):
+                    progress(note="continuing to checkout")
+                    settle(page)
+                    pass_sign_in_wall(page, label, secrets)
+                    settle(page)
+                elif safe_click(page, ["#prime-declineCTA", "a#prime-declineCTA", "input[name='prime-interstitial-decline']"]) or click_text(page, ["No thanks", "No Thanks"]):
+                    settle(page)
+                else:
+                    break
             stage[0] = "adding the buyer's address at checkout"
             progress(note="adding the buyer's address")
             add_address_at_checkout(page, ship)
