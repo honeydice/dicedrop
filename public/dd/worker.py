@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -264,10 +264,18 @@ def submit(page, field, buttons):
         pass
     if moved_on(page, field, before, 25):
         return "enter"
+    how = "enter (no reaction)"
     if click_first(page, buttons):
-        moved_on(page, field, before, 25)
-        return "enter, then button after 25s of nothing"
-    return "enter (no reaction)"
+        how = "enter, then button after 25s of nothing"
+        if moved_on(page, field, before, 20):
+            return how
+    try:
+        field.evaluate("(el) => { const f = el.closest('form'); if (f && f.requestSubmit) f.requestSubmit(); }")
+        how += ", then asked the form to send itself"
+        moved_on(page, field, before, 20)
+    except Exception:
+        pass
+    return how
 
 
 def click_first(page, selectors):
@@ -284,6 +292,52 @@ def snap(page):
         return base64.b64encode(page.screenshot(type="jpeg", quality=45, full_page=False)).decode()
     except Exception:
         return ""
+
+
+page_events = []
+
+LOOK_JS = """() => {
+  const pw = document.querySelector('#ap_password, input[name=password]');
+  const form = pw ? pw.closest('form') : null;
+  const shown = (e) => e.offsetParent !== null;
+  const btns = [...document.querySelectorAll('input[type=submit],button,[role=button],.a-button-input')].filter(shown).slice(0, 7)
+    .map((e) => e.tagName + '#' + e.id + '[' + (e.type || '') + '] ' + (e.innerText || e.value || e.getAttribute('aria-labelledby') || '').trim().slice(0, 28));
+  return {
+    form: form ? { id: form.id, name: form.name, action: (form.getAttribute('action') || '').slice(0, 70), method: form.method } : null,
+    field: pw ? { id: pw.id, type: pw.type, disabled: pw.disabled, readonly: pw.readOnly } : null,
+    focus: document.activeElement ? document.activeElement.tagName + '#' + document.activeElement.id : '',
+    buttons: btns,
+    dialogs: document.querySelectorAll('[role=dialog],.a-popover-modal,.a-modal-scroller').length,
+    frames: window.frames.length,
+    webdriver: navigator.webdriver === true,
+    cookies: navigator.cookieEnabled,
+    scripts: document.scripts.length,
+  };
+}"""
+
+
+def watch(page):
+    """Keep a short list of page errors and failed downloads, so a stall can be explained without seeing the screen."""
+    del page_events[:]
+
+    def note(kind, text):
+        if len(page_events) < 12:
+            page_events.append(kind + ": " + " ".join(str(text).split())[:110])
+
+    try:
+        page.on("pageerror", lambda error: note("script error", error))
+        page.on("requestfailed", lambda request: note("failed", request.url.split("?")[0][-70:] + " " + str(request.failure or "")))
+        page.on("console", lambda message: note("console", message.text) if message.type == "error" else None)
+    except Exception:
+        pass
+
+
+def look(page):
+    try:
+        found = json.dumps(page.evaluate(LOOK_JS))[:700]
+    except Exception as failure:
+        found = "could not inspect: " + str(failure)[:80]
+    return " | inspection: " + found + " | events: " + ("; ".join(page_events) if page_events else "none")
 
 
 def page_words(page, limit=220):
@@ -344,7 +398,7 @@ def amazon_sign_in(page, label, secrets):
         elif visible(page, PASSWORD):
             report(label, note="entering the password")
             if len([step for step in steps if step.startswith("password")]) >= 2:
-                return "needs_sign_in", "Amazon stayed on the password page (" + ", ".join(steps) + "). The page says: " + page_words(page)
+                return "needs_sign_in", "Amazon stayed on the password page (" + ", ".join(steps) + "). The page says: " + page_words(page, 120) + look(page)
             if visible(page, "input[name='rememberMe']"):
                 try:
                     page.locator("input[name='rememberMe']").first.check()
@@ -449,6 +503,7 @@ def run_in_account_browser(label, note, work):
             context = browser.contexts[0]
             page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(30000)
+            watch(page)
             try:
                 stage[0] = "checking the proxy"
                 note("checking the proxy")
@@ -461,7 +516,7 @@ def run_in_account_browser(label, note, work):
             finally:
                 shot = snap(page)
     except Stop as stop:
-        error = str(stop)[:600]
+        error = str(stop)[:1800]
     except Exception as failure:
         error = "While " + stage[0] + ": " + str(failure)[:300]
     finally:
