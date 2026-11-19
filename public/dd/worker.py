@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.15.2"
+VERSION = "0.16.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -511,12 +511,13 @@ class Stop(Exception):
     """A clean, explained stop: the message is shown to the operator as is."""
 
 
-def run_in_account_browser(label, note, work):
+def run_in_account_browser(label, note, work, reason="", summary=None):
     """Opens the account's own Kameleo browser on its dedicated proxy, runs `work(page, secrets)`, and always
     takes a screenshot and closes the profile afterwards. Returns (result, error text, screenshot, outgoing ip)."""
     profile_id = ""
     result, error, shot, exit_ip = None, "", "", ""
     stage = ["getting ready"]
+    opened_at = time.time()
     saved_stderr = capture_stderr()
     try:
         secrets = call("/api/worker/v1/accounts/secrets", {"account": label})
@@ -569,6 +570,15 @@ def run_in_account_browser(label, note, work):
                 kameleo("POST", "/profiles/" + profile_id + "/stop", {})
             except Exception as failure:
                 log("could not stop the profile cleanly: " + str(failure)[:200])
+        # One line in the account's access log: when, why, and how it went.
+        try:
+            fine, outcome = (False, error) if error else (True, "done")
+            if summary:
+                fine, outcome = summary(result, error)
+            call("/api/worker/v1/accounts/access", {"account": label, "reason": reason or "session", "ok": bool(fine),
+                 "result": str(outcome or "")[:600], "exit_ip": exit_ip, "seconds": int(time.time() - opened_at)})
+        except Exception as failure:
+            log("could not write the access log: " + str(failure)[:200])
     return result, error, shot, exit_ip
 
 
@@ -581,7 +591,9 @@ def sign_in_job(label):
             stage[0] = "signing in on Amazon"
             return amazon_sign_in(page, label, secrets)
 
-        result, error, shot, _ = run_in_account_browser(label, lambda text: report(label, note=text), work)
+        result, error, shot, _ = run_in_account_browser(
+            label, lambda text: report(label, note=text), work, reason="sign-in",
+            summary=lambda r, e: (True, "signed in") if r and r[0] == "signed_in" and not e else (False, e or (r[1] if r and r[1] else "sign-in did not finish")))
         state, reason = result if result else ("needs_sign_in", "")
         error = error or reason
         report(label, session_state=state, error=error, note="signed in" if state == "signed_in" else "sign-in did not finish", screenshot=shot, done=True)
@@ -1547,7 +1559,9 @@ def tracking_job(job):
                 pause(2.0, 4.0)
             return changes
 
-        _, problem, _, _ = run_in_account_browser(label, lambda text: None, work)
+        _, problem, _, _ = run_in_account_browser(
+            label, lambda text: None, work, reason="order check",
+            summary=lambda r, e: (False, e) if e else (True, "checked " + str(len(orders)) + " order" + ("" if len(orders) == 1 else "s") + " · " + str(r or 0) + " changed"))
     except Exception as failure:
         problem = "The order check could not run: " + str(failure)[:200]
     finally:
@@ -1600,6 +1614,7 @@ def cart_only_job(job):
         current_job["place_clicked"] = False
         current_job["duplicate_confirmed"] = False
         current_job["recorded_done"] = False
+        current_job["placed_id"] = ""
         current_job["shot"] = ""
         progress(note="getting ready")
         order = call("/api/worker/v1/orders/" + order_id + "/details", {})
@@ -1674,13 +1689,21 @@ def cart_only_job(job):
                          + (" · duplicate confirmed" if current_job.get("duplicate_confirmed") else "")
                          + (" · " + str(totals["verify"]) if totals.get("verify") else ""))
                 current_job["recorded_done"] = True
+                current_job["placed_id"] = order_id
                 stage[0] = "capturing the tracking card"
                 estimate = capture_tracking(page, order_id)
                 if current_job.get("shot"):
                     progress(note="ordered · " + (order_id or "") + (" · expected " + estimate if estimate else ""), screenshot=current_job["shot"])
             return totals
 
-        totals, error, shot, _ = run_in_account_browser(label, lambda text: progress(note=text), work)
+        real = job.get("run_kind") == "place_order"
+        totals, error, shot, _ = run_in_account_browser(
+            label, lambda text: progress(note=text), work,
+            reason=("place order " if real else "cart-only run ") + str(job.get("order_number", "")),
+            summary=lambda r, e: (
+                (True, "ordered · " + str(current_job.get("placed_id") or "") + (" · then: " + e[:200] if e else "")) if current_job.get("recorded_done")
+                else (False, e) if e
+                else (True, "cart ready · not ordered" + (" · total " + str((r or {}).get("total")) if (r or {}).get("total") is not None else ""))))
         totals = totals or {}
         if current_job.get("recorded_done"):
             pass  # the order was already recorded as placed; a later hiccup must not change that

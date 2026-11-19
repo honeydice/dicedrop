@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getSnapshot, requestSignin, updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { getAccountLog, getSnapshot, requestSignin, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -77,6 +77,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [editId, setEditId] = useState('');
   const [shot, setShot] = useState<{ label: string; taken_at: string; note: string | null; image: string } | null>(null);
   const [copied, setCopied] = useState('');
+  const [logs, setLogs] = useState<{ id: string; lines: AccessLine[] | null } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
     setSyncing(true);
@@ -434,8 +435,51 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         View last screenshot
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className={btn}
+                      aria-expanded={logs?.id === a.id}
+                      onClick={async () => {
+                        if (logs?.id === a.id) return setLogs(null);
+                        setLogs({ id: a.id, lines: null });
+                        const lines = await getAccountLog(a.id);
+                        if (lines) setLogs({ id: a.id, lines });
+                        else {
+                          setLogs(null);
+                          setError('The log could not be loaded. Try again.');
+                        }
+                      }}
+                    >
+                      {logs?.id === a.id ? 'Hide logs' : 'Logs'}
+                    </button>
                     {a.box_online !== true ? <span className="font-mono text-xs text-muted">sign-in needs this account&apos;s vps online</span> : null}
                   </div>
+
+                  {logs?.id === a.id ? (
+                    <div className="mt-3 overflow-hidden rounded-md border border-divider font-mono text-xs">
+                      {logs.lines === null ? (
+                        <div className="px-3 py-2.5 text-muted">loading</div>
+                      ) : logs.lines.length === 0 ? (
+                        <div className="px-3 py-2.5 text-muted">no sessions logged yet</div>
+                      ) : (
+                        logs.lines.map((l, i) => (
+                          <div key={l.at + i} className="flex items-start gap-3 border-b border-divider px-3 py-1.5 last:border-b-0">
+                            <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full" style={{ background: l.ok ? '#4ade80' : '#dc2626' }} />
+                            <span className="w-[150px] shrink-0 text-muted" title={now ? timeAgo(l.at, now) : undefined}>
+                              {new Date(l.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+                            </span>
+                            <span className="w-[230px] shrink-0 truncate text-fg" title={l.reason}>
+                              {l.reason}
+                            </span>
+                            <span className="min-w-0 flex-1 break-words" style={{ color: l.ok ? undefined : '#ef4444' }}>
+                              {l.result ?? (l.ok ? 'done' : 'failed')}
+                            </span>
+                            <span className="hidden w-[52px] shrink-0 text-right text-muted md:block">{l.seconds != null ? `${l.seconds}s` : ''}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

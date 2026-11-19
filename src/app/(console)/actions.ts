@@ -233,6 +233,29 @@ export async function requestSignin(id: string): Promise<Result> {
   }
 }
 
+export interface AccessLine {
+  at: string;
+  reason: string;
+  ok: boolean;
+  result: string | null;
+  exit_ip: string | null;
+  seconds: number | null;
+  box: string | null;
+}
+
+/** The last 20 times a box opened this account: when, why, and how it went. */
+export async function getAccountLog(id: string): Promise<AccessLine[] | null> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return null;
+    const { data, error } = await ctx.db.rpc('dd_ops_account_log', { p_account: id, p_limit: 20 });
+    if (error) return null;
+    return (data as AccessLine[] | null) ?? [];
+  } catch {
+    return null;
+  }
+}
+
 /** The last screenshot the worker took on this account, as a base64 JPEG. */
 export async function getSnapshot(id: string): Promise<{ taken_at: string; note: string | null; image: string } | null> {
   try {
