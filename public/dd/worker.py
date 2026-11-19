@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -158,7 +158,7 @@ EMAIL = "#ap_email, #ap_email_login, input[name='email']"
 PASSWORD = "#ap_password, input[name='password']"
 OTP = "#auth-mfa-otpcode, input[name='otpCode']"
 CAPTCHA = "#auth-captcha-image, #captchacharacters, form[action*='validateCaptcha'], iframe[src*='captcha']"
-ERROR_BOX = "#auth-error-message-box, #auth-warning-message-box"
+ERROR_BOX = "#auth-error-message-box, #auth-warning-message-box, .a-alert-error, #passkey-error-alert"
 HOME_PAGE = "https://www.amazon.com/"
 # Order history is only shown to a signed-in shopper; signed out, Amazon sends the browser to its sign-in page.
 ACCOUNT_PAGE = "https://www.amazon.com/gp/your-account/order-history"
@@ -170,15 +170,25 @@ def pause(low=0.8, high=2.0):
     time.sleep(random.uniform(low, high))
 
 
-def visible(page, selector):
+def first_visible(page, selector):
+    """The first match that is actually on screen. A selector list can match hidden fields first, so check each one."""
     try:
-        return page.locator(selector).first.is_visible()
+        matches = page.locator(selector)
+        for index in range(min(matches.count(), 8)):
+            candidate = matches.nth(index)
+            if candidate.is_visible():
+                return candidate
     except Exception:
-        return False
+        pass
+    return None
+
+
+def visible(page, selector):
+    return first_visible(page, selector) is not None
 
 
 def human_type(page, selector, text):
-    field = page.locator(selector).first
+    field = first_visible(page, selector) or page.locator(selector).first
     field.click()
     pause(0.2, 0.6)
     field.fill("")
@@ -188,8 +198,9 @@ def human_type(page, selector, text):
 
 def click_first(page, selectors):
     for selector in selectors:
-        if visible(page, selector):
-            page.locator(selector).first.click()
+        target = first_visible(page, selector)
+        if target is not None:
+            target.click()
             return True
     return False
 
@@ -236,7 +247,7 @@ def amazon_sign_in(page, label, secrets):
             return "signed_in", ""
 
         if visible(page, ERROR_BOX):
-            message = " ".join(page.locator(ERROR_BOX).first.inner_text().split())[:200]
+            message = " ".join(first_visible(page, ERROR_BOX).inner_text().split())[:200]
             if entered_password or entered_code:
                 return "needs_sign_in", "Amazon said: " + message
 
@@ -289,8 +300,9 @@ def amazon_sign_in(page, label, secrets):
                 pass
             return "needs_sign_in", "Stopped on a page the worker does not know yet: " + title + ". The page says: " + page_words(page)
 
+        pause(1.5, 2.5)
         try:
-            page.wait_for_load_state("domcontentloaded", timeout=45000)
+            page.wait_for_load_state("load", timeout=45000)
         except Exception:
             pass
         pause(2.0, 4.0)
@@ -432,9 +444,9 @@ STATES = {
 def safe_click(page, selectors):
     """Clicks the first visible match, but refuses anything that looks like a buy button."""
     for selector in selectors:
-        if not visible(page, selector):
+        target = first_visible(page, selector)
+        if target is None:
             continue
-        target = page.locator(selector).first
         try:
             described = " ".join([
                 target.inner_text(timeout=2000) or "",
