@@ -252,11 +252,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     {a.last_error ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
                     {a.current_order ? <span className="ml-3">placing {a.current_order}</span> : null}
                   </span>
-                  <span className="shrink-0 font-mono text-xs" style={{ color: full ? TONE.warn : 'rgb(var(--muted))' }}>
+                  <span className="w-[110px] shrink-0 whitespace-nowrap text-right font-mono text-xs" style={{ color: full ? TONE.warn : 'rgb(var(--muted))' }}>
                     {a.orders_today} / {a.daily_order_cap} today
                   </span>
                 </button>
-                <div className="flex w-[150px] shrink-0 items-center justify-end gap-1.5">
+                <div className="flex w-[172px] shrink-0 items-center justify-end gap-1.5">
                   {a.totp_enabled ? (
                     <>
                       <button
@@ -264,7 +264,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         onClick={() => void copyCode(a)}
                         aria-label={`Copy the two-step code for ${a.label}`}
                         title="Click to copy"
-                        className="relative h-8 overflow-hidden rounded-md border border-edge bg-raised px-2.5 font-mono text-[13px] tracking-[0.08em] text-fg hover:border-accent"
+                        className="relative h-8 w-[92px] shrink-0 overflow-hidden whitespace-nowrap rounded-md border border-edge bg-raised px-2 text-center font-mono text-[13px] tracking-[0.06em] text-fg hover:border-accent"
                       >
                         {copied === a.id ? 'copied' : a.totp_code ? `${a.totp_code.slice(0, 3)} ${a.totp_code.slice(3)}` : '--- ---'}
                         <span
@@ -273,7 +273,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                           style={{ width: `${(left / 30) * 100}%`, background: left <= 5 ? TONE.warn : TONE.good }}
                         />
                       </button>
-                      <span className="w-6 text-right font-mono text-[11px]" style={{ color: left <= 5 ? TONE.warn : 'rgb(var(--muted))' }}>
+                      <span className="w-7 shrink-0 text-right font-mono text-[11px]" style={{ color: left <= 5 ? TONE.warn : 'rgb(var(--muted))' }}>
                         {left}s
                       </span>
                       <button
@@ -282,7 +282,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         title="Refresh"
                         disabled={syncing}
                         onClick={() => void syncNow()}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-edge bg-raised text-[13px] text-muted hover:text-fg disabled:opacity-40"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-edge bg-raised text-[13px] text-muted hover:text-fg disabled:opacity-40"
                       >
                         <span aria-hidden="true" className={syncing ? 'animate-spin' : ''}>
                           ↻
