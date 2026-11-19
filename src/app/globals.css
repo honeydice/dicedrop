@@ -29,7 +29,7 @@
   --st-ordered-fg: #60a5fa;   --st-ordered-bg: #12284a;
   --st-shipped-fg: #c4b5fd;   --st-shipped-bg: #2b2550;
   --st-delivered-fg: #6ee7a8; --st-delivered-bg: #0f3524;
-  --st-issue-fg: #ff9a9a;     --st-issue-bg: #461a1a;
+  --st-issue-fg: #ef4444;     --st-issue-bg: #4a1212;
   --st-held-fg: #cbd5e1;      --st-held-bg: #232b36;
   --st-cancelled-fg: #a9b4c2; --st-cancelled-bg: #1c232d;
   --st-all-fg: #8d98a7;
@@ -62,7 +62,7 @@
   --st-ordered-fg: #1d4ed8;   --st-ordered-bg: #dbeafe;
   --st-shipped-fg: #7c3aed;   --st-shipped-bg: #ede9fe;
   --st-delivered-fg: #1a7f37; --st-delivered-bg: #dafbe1;
-  --st-issue-fg: #cf222e;     --st-issue-bg: #ffebe9;
+  --st-issue-fg: #dc2626;     --st-issue-bg: #fee2e2;
   --st-held-fg: #475569;      --st-held-bg: #f1f5f9;
   --st-cancelled-fg: #57606a; --st-cancelled-bg: #eaeef2;
   --st-all-fg: #6e7781;

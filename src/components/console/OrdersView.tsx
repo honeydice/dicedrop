@@ -27,7 +27,7 @@ const PILL: Record<string, { bg: string; fg: string }> = {
   ordered: { bg: '#60a5fa', fg: '#0b1f44' },
   shipped: { bg: '#c4b5fd', fg: '#2e1065' },
   delivered: { bg: '#4ade80', fg: '#052e16' },
-  issue: { bg: '#f87171', fg: '#450a0a' },
+  issue: { bg: '#dc2626', fg: '#ffffff' },
   held: { bg: '#cbd5e1', fg: '#1e293b' },
   cancelled: { bg: '#94a3b8', fg: '#0f172a' },
 };
@@ -353,7 +353,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                   {o.title ?? o.asin ?? 'Untitled item'}
                   {o.quantity > 1 ? ` ×${o.quantity}` : ''}
                   {note ? (
-                    <span className="ml-2" style={{ color: o.status === 'issue' ? 'rgb(var(--bad))' : look.fg }}>
+                    <span className="ml-2" style={{ color: o.status === 'issue' ? '#ef4444' : look.fg }}>
                       · {note}
                     </span>
                   ) : null}
