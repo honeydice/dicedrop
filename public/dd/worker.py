@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -263,9 +263,39 @@ def amazon_sign_in(page, label, secrets):
     return "needs_sign_in", "Amazon kept asking for more steps than expected."
 
 
+ERR_FILE = "/app/driver-errors.log"
+
+
+def capture_stderr():
+    """Send low-level error output to a file during a job, so the reason for a crash can be reported to DiceDrop."""
+    try:
+        saved = os.dup(2)
+        handle = os.open(ERR_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.dup2(handle, 2)
+        os.close(handle)
+        return saved
+    except Exception:
+        return None
+
+
+def restore_stderr(saved):
+    detail = ""
+    try:
+        if saved is not None:
+            os.dup2(saved, 2)
+            os.close(saved)
+        with open(ERR_FILE, "r", errors="replace") as handle:
+            detail = " ".join(handle.read().split())[-500:]
+    except Exception:
+        pass
+    return detail
+
+
 def sign_in_job(label):
     profile_id = ""
     state, error, shot, exit_ip = "", "", "", ""
+    stage = "getting ready"
+    saved_stderr = capture_stderr()
     try:
         current_job["text"] = "signing in " + label
         report(label, note="getting ready", error="")
@@ -275,34 +305,45 @@ def sign_in_job(label):
         if not secrets.get("proxy") or not secrets["proxy"].get("host"):
             raise RuntimeError("No dedicated proxy is attached to this account.")
 
+        stage = "installing the remote control"
         ensure_playwright()
         from playwright.sync_api import sync_playwright
 
         box_ip = direct_ip()
+        stage = "creating the device identity"
         profile_id = ensure_profile(label, secrets)
         report(label, note="opening the browser (the first time downloads it, a few minutes)")
 
+        stage = "starting the remote control"
         with sync_playwright() as playwright:
+            stage = "connecting to the Kameleo browser"
             endpoint = "ws://" + KAMELEO.split("://", 1)[1] + "/playwright/" + profile_id
             browser = playwright.chromium.connect_over_cdp(endpoint_url=endpoint, timeout=600000)
+            stage = "opening a page"
             context = browser.contexts[0]
             page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(30000)
             try:
+                stage = "checking the proxy"
                 report(label, note="checking the proxy")
                 page.goto("https://api.ipify.org/?format=text", wait_until="domcontentloaded", timeout=60000)
                 exit_ip = page.inner_text("body").strip()[:45]
                 if not exit_ip or (box_ip and exit_ip == box_ip):
                     raise RuntimeError("The proxy is not being used (the browser shows this box's own address). Stopped before opening Amazon.")
                 report(label, exit_ip=exit_ip, note="proxy ok, opening Amazon")
+                stage = "signing in on Amazon"
                 state, error = amazon_sign_in(page, label, secrets)
             finally:
                 shot = snap(page)
     except Exception as failure:
         state = state or "needs_sign_in"
-        error = error or str(failure)[:300]
+        error = error or ("While " + stage + ": " + str(failure)[:300])
         log("sign-in for " + label + " stopped: " + error)
     finally:
+        low_level = restore_stderr(saved_stderr)
+        if error and low_level:
+            error = error + " | details: " + low_level
+            log("details: " + low_level)
         if profile_id:
             try:
                 kameleo("POST", "/profiles/" + profile_id + "/stop", {})
