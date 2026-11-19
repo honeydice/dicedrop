@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { updateAccount, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
-import type { AccountStatus, OpsAccount, OpsAccounts } from '@/lib/types';
-import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, label, PageHead, sessionLabel, sessionTone, Tile, TONE } from './ui';
+import type { OpsAccount, OpsAccounts } from '@/lib/types';
+import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
 import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
 import { AccountModal } from './AccountModal';
@@ -27,6 +27,31 @@ function tone(a: OpsAccount): string {
 }
 
 
+/** One titled block inside an expanded account. */
+function Panel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="rounded-xl border border-line bg-panel">
+      <div className="border-b border-line px-4 py-2.5 font-mono text-xs text-muted">{title}</div>
+      <div className="px-4 py-4">{children}</div>
+    </section>
+  );
+}
+
+function Rows({ items }: { items: [string, string][] }) {
+  return (
+    <dl className="space-y-2.5 font-mono text-[13px]">
+      {items.map(([k, v]) => (
+        <div key={k} className="flex items-baseline justify-between gap-4">
+          <dt className="shrink-0 text-muted">{k}</dt>
+          <dd className="min-w-0 truncate text-right text-fg" title={v}>
+            {v}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function AccountsView({ initial, initialError }: { initial: OpsAccounts; initialError: string }) {
   const { data, error, setError, refresh } = useLive<OpsAccounts>('dd_ops_accounts', undefined, initial, initialError);
   const now = useNow();
@@ -37,7 +62,6 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState('');
-  const [capDraft, setCapDraft] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState('');
   const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
@@ -121,7 +145,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
 
   return (
     <>
-      <PageHead title="Accounts" hint="The Amazon account library. Every account belongs to the platform and places orders for any client.">
+      <PageHead title="Accounts">
         <button type="button" className={btnAccent} onClick={() => setAdding(true)}>
           Add account
         </button>
@@ -260,68 +284,103 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </div>
 
               {isOpen ? (
-                <div className="flex flex-wrap items-end gap-3 border-t border-divider px-5 pb-4 pl-[46px] pt-3">
-                  <div className="basis-40">
-                    <label htmlFor={`st-${a.id}`} className={label}>
-                      Status
-                    </label>
-                    <select id={`st-${a.id}`} value={a.status} disabled={busy} onChange={(e) => void patch(a.id, { status: e.target.value as AccountStatus })} className={field}>
-                      <option value="warming">Warming</option>
-                      <option value="active">Active</option>
-                      <option value="paused">Paused</option>
-                      <option value="locked">Locked</option>
-                    </select>
+                <div className="border-t border-divider bg-raised/30 px-6 py-5">
+                  <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+                    <Panel title="vps">
+                      <div className="flex items-center gap-3">
+                        <Dot color={a.box_id ? (a.box_online ? TONE.good : TONE.bad) : TONE.muted} />
+                        <span className="font-mono text-[16px] text-fg">{a.box_name ?? 'unassigned'}</span>
+                        {a.box_id ? (
+                          <span className="font-mono text-[13px]" style={{ color: a.box_online ? TONE.good : TONE.bad }}>
+                            {a.box_online ? 'online' : 'offline'}
+                          </span>
+                        ) : null}
+                      </div>
+                      <label htmlFor={`bx-${a.id}`} className="mb-1.5 mt-4 block font-mono text-xs text-muted">
+                        move to
+                      </label>
+                      <select id={`bx-${a.id}`} value={a.box_id ?? ''} disabled={busy} onChange={(e) => void patch(a.id, { box_id: e.target.value || null })} className={`${field} font-mono`}>
+                        <option value="">unassigned</option>
+                        {data.boxes.map((b) => {
+                          const n = data.accounts.filter((x) => x.box_id === b.id).length;
+                          return (
+                            <option key={b.id} value={b.id}>
+                              {b.name} · {n} account{n === 1 ? '' : 's'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </Panel>
+
+                    <Panel title="orders / day">
+                      <div className="flex items-baseline gap-2 font-mono">
+                        <span className="text-[26px] leading-none text-fg">{a.orders_today}</span>
+                        <span className="text-[14px] text-muted">of {a.daily_order_cap} today</span>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-chip" role="img" aria-label={`${a.orders_today} of ${a.daily_order_cap} orders used today`}>
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${Math.min(100, (Number(a.orders_today) / Math.max(1, Number(a.daily_order_cap))) * 100)}%`, background: full ? TONE.warn : 'rgb(var(--accent))' }}
+                        />
+                      </div>
+                      <div className="mt-4 flex items-center gap-2">
+                        <span className="mr-auto font-mono text-xs text-muted">daily limit</span>
+                        <button
+                          type="button"
+                          aria-label="Lower the daily limit by one"
+                          disabled={busy || Number(a.daily_order_cap) <= 1}
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-edge bg-raised font-mono text-[18px] text-fg disabled:opacity-40"
+                          onClick={() => void patch(a.id, { daily_order_cap: Number(a.daily_order_cap) - 1 })}
+                        >
+                          −
+                        </button>
+                        <span className="w-10 text-center font-mono text-[18px] text-fg">{a.daily_order_cap}</span>
+                        <button
+                          type="button"
+                          aria-label="Raise the daily limit by one"
+                          disabled={busy}
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-edge bg-raised font-mono text-[18px] text-fg disabled:opacity-40"
+                          onClick={() => void patch(a.id, { daily_order_cap: Number(a.daily_order_cap) + 1 })}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </Panel>
+
+                    <Panel title="identity">
+                      <Rows
+                        items={[
+                          ['email', a.login_email ?? 'none'],
+                          ['proxy', a.proxy_label ?? 'none'],
+                          ['card', a.card_bank ? cardLabel(a.card_bank, a.card_last4) : 'none'],
+                          ['password', a.password_set ? 'saved' : 'not set'],
+                          ['two-step', a.totp_enabled ? 'generating' : 'off'],
+                          ['access', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'],
+                        ]}
+                      />
+                    </Panel>
+
+                    <Panel title="activity">
+                      <Rows
+                        items={[
+                          ['spent today', `${money(Number(a.spent_today))}${a.daily_spend_cap ? ` of ${money(Number(a.daily_spend_cap))}` : ''}`],
+                          ['awaiting tracking', `${a.awaiting_tracking}${a.max_pending_orders ? ` of ${a.max_pending_orders}` : ''}`],
+                          ['open issues', String(a.open_issues)],
+                          ['orders all time', String(a.orders_total)],
+                          ['sign-in', sessionLabel(a.session_state)],
+                          ['last seen', a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'],
+                        ]}
+                      />
+                    </Panel>
                   </div>
-                  <div className="basis-40">
-                    <label htmlFor={`bx-${a.id}`} className={label}>
-                      VPS box
-                    </label>
-                    <select id={`bx-${a.id}`} value={a.box_id ?? ''} disabled={busy} onChange={(e) => void patch(a.id, { box_id: e.target.value || null })} className={field}>
-                      <option value="">Unassigned</option>
-                      {data.boxes.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="basis-28">
-                    <label htmlFor={`cp-${a.id}`} className={label}>
-                      Orders / day
-                    </label>
-                    <input
-                      id={`cp-${a.id}`}
-                      type="number"
-                      min={1}
-                      value={capDraft[a.id] ?? String(a.daily_order_cap)}
-                      onChange={(e) => setCapDraft({ ...capDraft, [a.id]: e.target.value })}
-                      className={field}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    disabled={busy || capDraft[a.id] === undefined || Number(capDraft[a.id]) === Number(a.daily_order_cap)}
-                    className={btn}
-                    onClick={async () => {
-                      const ok = await patch(a.id, { daily_order_cap: Number(capDraft[a.id]) });
-                      if (ok) {
-                        const next = { ...capDraft };
-                        delete next[a.id];
-                        setCapDraft(next);
-                      }
-                    }}
-                  >
-                    Save cap
-                  </button>
-                  <button type="button" disabled={busy} className={btnAccent} onClick={() => setEditId(a.id)}>
-                    Edit details
-                  </button>
-                  <div className="basis-full font-mono text-xs text-muted">
-                    {money(Number(a.spent_today))} spent today · seen {a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'} · {sessionLabel(a.session_state)}
-                    {a.status === 'warming' ? ' · warming' : ''} · {a.card_bank ? cardLabel(a.card_bank, a.card_last4) : 'no card'} · {a.orders_total} orders all time · {a.open_issues} open issues · proxy {a.proxy_label ?? 'none'} · two-step codes{' '}
-                    {a.totp_enabled ? 'generating' : 'off'} · password {a.password_set ? 'saved' : 'not set'} · {a.awaiting_tracking}
-                    {a.max_pending_orders ? ` / ${a.max_pending_orders}` : ''} awaiting tracking · price limit{' '}
-                    {a.daily_spend_cap ? money(Number(a.daily_spend_cap)) : 'none'}
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                    <button type="button" disabled={busy} className={btnAccent} onClick={() => setEditId(a.id)}>
+                      Edit details
+                    </button>
+                    <button type="button" disabled={busy} className={btn} onClick={() => void patch(a.id, { status: a.status === 'paused' ? 'active' : 'paused' })}>
+                      {a.status === 'paused' ? 'Resume account' : 'Pause account'}
+                    </button>
                   </div>
                 </div>
               ) : null}
