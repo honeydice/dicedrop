@@ -21,13 +21,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.5"
+VERSION = "0.9.6"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
 LIB = "/app/pylib"
 HEARTBEAT_SECONDS = 15
-UPDATE_CHECK_SECONDS = 300
+UPDATE_CHECK_SECONDS = 60
 AGENT = "DiceDropWorker/" + VERSION
 
 job_lock = threading.Lock()
@@ -204,6 +204,39 @@ def typed_length(field):
         return -1
 
 
+def type_checked(page, selector, text):
+    """Types into a field and confirms the text is really in it before anything is submitted.
+    Amazon sometimes redraws the sign-in page a moment after it appears, which wipes anything typed too early."""
+    how = "keys"
+    field = None
+    for attempt in range(3):
+        try:
+            page.wait_for_load_state("networkidle", timeout=12000)
+        except Exception:
+            pass
+        pause(1.0, 2.0)
+        field = human_type(page, selector, text)
+        pause(0.8, 1.4)
+        if typed_length(field) == len(text):
+            return field, how + (" (try " + str(attempt + 1) + ")" if attempt else "")
+        pause(1.5, 2.5)
+    # Last resort: place the text straight into whichever matching field will hold it.
+    try:
+        matches = page.locator(selector + ", input[type='password']") if "password" in selector else page.locator(selector)
+        for index in range(min(matches.count(), 8)):
+            candidate = matches.nth(index)
+            if not candidate.is_visible():
+                continue
+            candidate.click()
+            candidate.fill(text)
+            pause(0.5, 1.0)
+            if typed_length(candidate) == len(text):
+                return candidate, "direct fill"
+    except Exception:
+        pass
+    return field, "not accepted by the field"
+
+
 def submit(page, field, buttons):
     """Submit the way a person does: press Enter in the field. If the page has not moved on, click the button too."""
     before = page.url
@@ -289,8 +322,8 @@ def amazon_sign_in(page, label, secrets):
                     page.locator("#auth-mfa-remember-device").first.check()
                 except Exception:
                     pass
-            field = human_type(page, OTP, code["code"])
-            steps.append("code:" + submit(page, field, ["#auth-signin-button", "input[type='submit']", "button[type='submit']"]))
+            field, how = type_checked(page, OTP, code["code"])
+            steps.append("code by " + how + ":" + submit(page, field, ["#auth-signin-button", "input[type='submit']", "button[type='submit']"]))
             entered_code = True
         elif visible(page, PASSWORD):
             report(label, note="entering the password")
@@ -301,9 +334,11 @@ def amazon_sign_in(page, label, secrets):
                     page.locator("input[name='rememberMe']").first.check()
                 except Exception:
                     pass
-            field = human_type(page, PASSWORD, secrets["password"])
+            field, how = type_checked(page, PASSWORD, secrets["password"])
             typed = typed_length(field)
-            steps.append("password typed " + str(typed) + " of " + str(len(secrets["password"])) + " characters, sent by " + submit(page, field, ["#signInSubmit", "input[type='submit']", "button[type='submit']"]))
+            if typed != len(secrets["password"]):
+                return "needs_sign_in", "The password field would not take the password (" + str(typed) + " of " + str(len(secrets["password"])) + " characters, " + how + "). The page says: " + page_words(page)
+            steps.append("password typed " + str(typed) + " of " + str(len(secrets["password"])) + " by " + how + ", sent by " + submit(page, field, ["#signInSubmit", "input[type='submit']", "button[type='submit']"]))
             entered_password = True
         elif visible(page, EMAIL):
             report(label, note="entering the email")
