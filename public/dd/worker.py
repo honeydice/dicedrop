@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.17.6"
+VERSION = "0.18.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1501,7 +1501,7 @@ def read_tracking(page, result, card_words=""):
     return result
 
 
-DATE_RE = r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery|Delivery|Delivered):?\s+(?:today|tomorrow|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))"
+DATE_RE = r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery|Delivery|Delivered):?\s+(?:today|tomorrow|(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day(?:,?\s+[A-Za-z]{3,9}\.?\s+\d{1,2})?|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))"
 
 
 def order_page_ok(page, number, tracking=False):
@@ -1587,6 +1587,127 @@ def open_order(page, number, tries=2, wait=6.0):
     return "", card_words
 
 
+def needs_verify(words):
+    """Amazon is holding the order until the card is verified ("Your bank requires verification for the card...")."""
+    low = (words or "").lower()
+    return "requires verification" in low or "verify payment" in low or "verify your card" in low
+
+
+def in_frames(page, selector):
+    """The first visible match for a selector, looking through the page and every frame in it."""
+    for frame in page.frames:
+        try:
+            found = frame.locator(selector)
+            for index in range(min(found.count(), 6)):
+                if found.nth(index).is_visible():
+                    return frame, found.nth(index)
+        except Exception:
+            continue
+    return None, None
+
+
+def frames_summary(page):
+    """What each frame shows (field names and button words only, never values), for the log."""
+    seen = []
+    for frame in page.frames:
+        try:
+            found = frame.evaluate(FRAME_FIELDS_JS)
+            seen.append({"frame": frame.url.split("?")[0][-50:], "fields": [f["tag"] + ":" + f["type"] + " " + f["key"] for f in found.get("fields", [])][:12],
+                         "buttons": found.get("buttons", [])[:12], "says": found.get("says", "")[:160]})
+        except Exception:
+            continue
+    return json.dumps(seen)[:1500]
+
+
+def resolve_verify(page, number, label):
+    """Answers Amazon's "Verify payment" on a placed order, the way a person does:
+    order page -> Verify payment -> pick the card on file -> re-enter its number -> Verify card.
+    Uses the card details saved on the account. Returns (verified, short note). The card number is typed
+    into Amazon only; it is never logged."""
+    import re
+
+    try:
+        page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        if not order_page_ok(page, number):
+            return False, "the order page did not load"
+        if not needs_verify(page_words(page, 6000)):
+            return True, "no verification is being asked for"
+        card = call("/api/worker/v1/accounts/card", {"account": label})
+        digits = re.sub(r"\D", "", str(card.get("number") or ""))
+        if not card.get("saved") or len(digits) < 12:
+            return False, "no card details are saved on this account"
+        last4 = digits[-4:]
+        if not click_text(page, ["Verify payment", "Verify Payment"]):
+            return False, "the Verify payment button could not be clicked"
+        settle(page)
+
+        # "Select a payment method": pick the card on file, then its number box appears.
+        frame, box = None, None
+        for attempt in range(30):
+            frame, box = in_frames(page, "input[placeholder*='ending in' i]")
+            if box is not None:
+                break
+            if attempt % 5 == 0:
+                for owner in page.frames:
+                    try:
+                        row = owner.get_by_text(re.compile(r"ending in\s*" + last4)).first
+                        if row.count() > 0 and row.is_visible():
+                            radio = row.locator("xpath=ancestor::*[.//input[@type='radio']][1]//input[@type='radio']").first
+                            if radio.count() > 0:
+                                radio.check(timeout=4000, force=True)
+                            else:
+                                row.click(timeout=4000)
+                            break
+                    except Exception:
+                        continue
+            time.sleep(1)
+        if box is None:
+            log("verify payment: the card number box did not appear; the page shows: " + frames_summary(page))
+            return False, "the card number box did not appear"
+
+        box.click()
+        box.fill("")
+        box.type(digits, delay=70)
+        pause(0.4, 0.9)
+        typed = re.sub(r"\D", "", box.input_value())
+        if len(typed) != len(digits):
+            box.fill(digits)
+        if not click_text_in(frame.locator("body"), ["Verify card", "Verify Card"]):
+            log("verify payment: no Verify card button; the page shows: " + frames_summary(page))
+            return False, "the Verify card button could not be clicked"
+        log("verify payment: card number entered and Verify card clicked for order " + number)
+
+        # Amazon may then ask to confirm the payment method for the order. Never a buy button.
+        for _ in range(20):
+            time.sleep(1.5)
+            moved = False
+            for owner in page.frames:
+                try:
+                    if click_text_in(owner.locator("body"), ["Use this payment method", "Continue"]):
+                        moved = True
+                        break
+                except Stop:
+                    raise
+                except Exception:
+                    continue
+            if moved or "order-details" in page.url or "order-history" in page.url:
+                break
+        settle(page)
+        time.sleep(4)
+        page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        if order_page_ok(page, number) and not needs_verify(page_words(page, 6000)):
+            return True, "payment verified"
+        log("verify payment: Amazon still asks after the attempt; the page shows: " + frames_summary(page))
+        return False, "Amazon still asks to verify the payment"
+    except Stop:
+        raise
+    except Exception as failure:
+        log("verify payment could not be completed: " + str(failure)[:200])
+        return False, "the verification could not be completed"
+
+
 def check_order(page, order):
     """Looks one placed order up on Amazon the way a person would: Your Orders, that order, Track package.
     Returns what Amazon shows: state (ordered, shipped, delivered, cancelled), the delivery estimate, the
@@ -1598,10 +1719,36 @@ def check_order(page, order):
     result = {"state": order.get("status") if order.get("status") in ("ordered", "shipped") else "ordered",
               "delivery_estimate": "", "tracking_number": "", "carrier": "", "note": "", "screenshot": ""}
 
-    kind, card_words = open_order(page, number, tries=3, wait=6.0)
+    kind, card_words = open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0))
     if not kind:
         log("order " + number + " could not be opened on Amazon this time; it is checked again next round")
         return result
+
+    # Amazon holding the order for card verification: try to answer it (twice at most), otherwise report it.
+    asked = needs_verify(card_words) or (kind != "list" and needs_verify(page_words(page, 6000)))
+    if asked:
+        attempts = int(order.get("verify_attempts") or 0)
+        label = order.get("_label") or ""
+        verified, why = (False, "left for a person after two tries")
+        tried = False
+        if label and attempts < 2:
+            tried = True
+            verified, why = resolve_verify(page, number, label)
+            log("order " + number + " verify payment: " + why)
+        if not verified:
+            try:
+                page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+            except Exception:
+                pass
+            result.update({"state": "verify", "note": "Verify Payment", "attempted": tried, "verify_detail": why,
+                           "screenshot": picture(page, card_only=False) if order_page_ok(page, number) else ""})
+            return result
+        result["verified"] = True
+        kind, card_words = open_order(page, number, tries=2, wait=5.0)
+        if not kind:
+            result["state"] = "ordered"
+            return result
     if kind == "track":
         result["state"] = "ordered"
         return read_tracking(page, result, card_words)
@@ -1649,6 +1796,7 @@ def tracking_job(job):
             for order in orders:
                 stage[0] = "checking order " + str(order.get("order_number"))
                 try:
+                    order["_label"] = label
                     seen = check_order(page, order)
                     # The picture always goes along; DiceDrop keeps it the first time each milestone is seen.
                     reply = call("/api/worker/v1/orders/" + order["id"] + "/check", seen)
@@ -1795,17 +1943,24 @@ def cart_only_job(job):
                 current_job["recorded_done"] = True
                 current_job["placed_id"] = order_id
                 stage[0] = "capturing the tracking card"
-                estimate = capture_tracking(page, order_id) or current_job.get("thankyou_estimate", "")
-                log("after ordering: estimate '" + str(estimate) + "', picture " + ("taken" if current_job.get("shot") else "missing"))
-                if current_job.get("shot"):
-                    progress(note="ordered · " + (order_id or "") + (" · expected " + estimate if estimate else ""), screenshot=current_job["shot"])
-                if estimate or current_job.get("shot"):
-                    # The same report the regular order check sends: saves the delivery window and the "ordered" proof.
+                seen = {"state": "ordered", "delivery_estimate": "", "note": "", "tracking_number": "", "carrier": "", "screenshot": ""}
+                if order_id:
                     try:
-                        call("/api/worker/v1/orders/" + str(job.get("id")) + "/check",
-                             {"state": "ordered", "delivery_estimate": estimate, "note": estimate, "tracking_number": "", "carrier": "", "screenshot": current_job.get("shot", "")})
+                        seen = check_order(page, {"amazon_order_id": order_id, "status": "ordered", "_label": label, "_tries": 10, "_wait": 12.0, "verify_attempts": 0})
+                    except Stop:
+                        raise
                     except Exception as failure:
-                        log("could not save the ordered proof: " + str(failure)[:200])
+                        log("after ordering: could not look at the order: " + str(failure)[:200])
+                if not seen.get("delivery_estimate") and current_job.get("thankyou_estimate"):
+                    seen["delivery_estimate"] = current_job["thankyou_estimate"]
+                current_job["shot"] = seen.get("screenshot", "")
+                log("after ordering: " + str(seen.get("state")) + ", estimate '" + str(seen.get("delivery_estimate")) + "', picture " + ("taken" if seen.get("screenshot") else "missing"))
+                if seen.get("state") == "verify" or seen.get("delivery_estimate") or seen.get("screenshot"):
+                    # The same report the regular order check sends: delivery window, proof picture, Verify Payment.
+                    try:
+                        call("/api/worker/v1/orders/" + str(job.get("id")) + "/check", seen)
+                    except Exception as failure:
+                        log("could not save the order's first look: " + str(failure)[:200])
             return totals
 
         real = job.get("run_kind") == "place_order"

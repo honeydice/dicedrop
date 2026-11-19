@@ -428,7 +428,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      disabled={busy === o.id || !['held', 'pending', 'issue'].includes(o.status)}
+                      disabled={busy === o.id || !['held', 'pending', 'issue'].includes(o.status) || Boolean(o.amazon_order_id)}
                       onClick={() => void rpc(o.id, 'dd_ops_order_now', { p_order: o.id })}
                       className={btnAccent}
                       title="Cart only: adds the item and the buyer's address, opens checkout, takes a screenshot. Does not buy."
