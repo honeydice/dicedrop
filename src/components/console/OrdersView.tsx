@@ -52,7 +52,7 @@ function allowed(o: OpsOrder, action: Action): boolean {
 
 function matches(o: OpsOrder, q: string): boolean {
   if (!q) return true;
-  return [o.title, o.order_number, o.amazon_order_id, o.buyer_name, o.buyer_username, o.store_code, o.account_label, o.box_name, o.client_name, o.asin]
+  return [o.title, o.dd_number, o.order_number, o.amazon_order_id, o.buyer_name, o.buyer_username, o.store_code, o.account_label, o.box_name, o.client_name, o.asin]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
@@ -347,6 +347,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 <span className="w-[82px] shrink-0 rounded px-2 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide" style={{ background: pill.bg, color: pill.fg }}>
                   {o.status}
                 </span>
+                <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
                 <span className="w-[150px] shrink-0 truncate text-fg">{o.order_number}</span>
                 <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
                 <span className="min-w-0 flex-1 truncate text-muted">
@@ -430,7 +431,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                         onClick={async () => {
                           const { data: result } = await supabase.rpc('dd_ops_order_snapshot', { p_order: o.id });
                           const r = result as { taken_at: string; note: string | null; image: string } | null;
-                          if (r) setShot({ title: o.order_number, ...r });
+                          if (r) setShot({ title: `${o.dd_number} · ${o.order_number}`, ...r });
                           else setError('That screenshot could not be loaded. Try again.');
                         }}
                       >

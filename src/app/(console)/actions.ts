@@ -96,6 +96,67 @@ export async function revokeKey(id: string): Promise<Result> {
   }
 }
 
+export interface PulseLine {
+  id: string;
+  event: string;
+  status: 'pending' | 'sent' | 'failed';
+  attempts: number;
+  response_code: number | null;
+  last_error: string | null;
+  created_at: string;
+  sent_at: string | null;
+  url: string;
+  dd_number: string | null;
+  order_number: string | null;
+  key_name: string | null;
+}
+
+/** The last 20 pulses sent to this client: what, when, and whether it landed. */
+export async function getPulseLog(clientId: string): Promise<PulseLine[] | null> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return null;
+    const { data, error } = await ctx.db.rpc('dd_ops_webhook_log', { p_client: clientId, p_limit: 20 });
+    if (error) return null;
+    return (data as PulseLine[] | null) ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export async function setKeyWebhook(keyId: string, url: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_key_webhook', { p_key: keyId, p_url: url });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function sendTestPulse(keyId: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_test_pulse', { p_key: keyId });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function resendPulse(deliveryId: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_resend_pulse', { p_delivery: deliveryId });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 // ---------------------------------------------------------------- Accounts
 
 export interface AccountInput {

@@ -15,6 +15,7 @@ export interface Named {
 
 export interface OpsOrder {
   id: string;
+  dd_number: string;
   run_requested_at: string | null;
   run_kind: string | null;
   run_note: string | null;

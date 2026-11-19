@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { createClientRecord, createKey, revokeKey, setClientStatus, type Result } from '@/app/(console)/actions';
+import { createClientRecord, createKey, getPulseLog, resendPulse, revokeKey, sendTestPulse, setClientStatus, setKeyWebhook, type PulseLine, type Result } from '@/app/(console)/actions';
 import { money, timeAgo } from '@/lib/format';
 import type { OpsClient } from '@/lib/types';
 import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
@@ -23,6 +23,15 @@ export function ClientsView({ initial, initialError, baseUrl }: { initial: OpsCl
   const [keyName, setKeyName] = useState('');
   const [keyHook, setKeyHook] = useState('');
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  const [hookFor, setHookFor] = useState('');
+  const [hookUrl, setHookUrl] = useState('');
+  const [pulses, setPulses] = useState<{ id: string; lines: PulseLine[] | null } | null>(null);
+
+  const loadPulses = async (clientId: string) => {
+    const lines = await getPulseLog(clientId);
+    if (lines) setPulses({ id: clientId, lines });
+    else setError('The pulse log could not be loaded. Try again.');
+  };
 
   const run = async (work: () => Promise<Result>): Promise<Result | null> => {
     setBusy(true);
@@ -63,7 +72,8 @@ const res = await fetch('${baseUrl}/api/v1/orders', {
 });
 const { order } = await res.json();   // order.id, order.status
 
-// GET  ${baseUrl}/api/v1/orders/{id}
+// Full reference and the copy-paste pulse receiver: ${baseUrl}/docs
+// GET  ${baseUrl}/api/v1/orders/{id}        (id or DiceDrop number, e.g. DD-100042)
 // POST ${baseUrl}/api/v1/orders/{id}/cancel   (or /hold, /retry)`;
 
   return (
@@ -149,6 +159,18 @@ const { order } = await res.json();   // order.id, order.status
                 >
                   New API key
                 </button>
+                <button
+                  type="button"
+                  className={btn}
+                  aria-expanded={pulses?.id === c.id}
+                  onClick={() => {
+                    if (pulses?.id === c.id) return setPulses(null);
+                    setPulses({ id: c.id, lines: null });
+                    void loadPulses(c.id);
+                  }}
+                >
+                  {pulses?.id === c.id ? 'Hide pulses' : 'Pulses'}
+                </button>
               </div>
             </div>
 
@@ -215,13 +237,98 @@ const { order } = await res.json();   // order.id, order.status
                     </div>
                   </div>
                   {k.revoked_at ? null : (
-                    <button type="button" disabled={busy} className={btnDanger} onClick={() => void run(() => revokeKey(k.id))}>
-                      Switch off
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className={btn}
+                        onClick={() => {
+                          setHookFor(hookFor === k.id ? '' : k.id);
+                          setHookUrl(k.webhook_url ?? '');
+                        }}
+                      >
+                        {k.webhook_url ? 'Webhook' : 'Add webhook'}
+                      </button>
+                      {k.webhook_url ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={btn}
+                          onClick={async () => {
+                            const result = await run(() => sendTestPulse(k.id));
+                            if (result?.ok) {
+                              setPulses({ id: c.id, lines: null });
+                              setTimeout(() => void loadPulses(c.id), 12000);
+                            }
+                          }}
+                        >
+                          Send test pulse
+                        </button>
+                      ) : null}
+                      <button type="button" disabled={busy} className={btnDanger} onClick={() => void run(() => revokeKey(k.id))}>
+                        Switch off
+                      </button>
+                    </div>
                   )}
+                  {hookFor === k.id ? (
+                    <form
+                      className="flex w-full flex-wrap items-end gap-3"
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        const result = await run(() => setKeyWebhook(k.id, hookUrl));
+                        if (result?.ok) setHookFor('');
+                      }}
+                    >
+                      <div className="flex-1 basis-72">
+                        <label htmlFor={`hook-${k.id}`} className={label}>
+                          Webhook URL
+                        </label>
+                        <input id={`hook-${k.id}`} type="url" value={hookUrl} onChange={(e) => setHookUrl(e.target.value)} placeholder="https://your-app.com/api/dicedrop/webhook" className={field} />
+                      </div>
+                      <button type="submit" disabled={busy} className={btnAccent}>
+                        Save
+                      </button>
+                    </form>
+                  ) : null}
                 </div>
               ))
             )}
+
+            {pulses?.id === c.id ? (
+              <div className="border-t border-divider font-mono text-xs">
+                {pulses.lines === null ? (
+                  <div className="px-5 py-2.5 text-muted">loading</div>
+                ) : pulses.lines.length === 0 ? (
+                  <div className="px-5 py-2.5 text-muted">no pulses sent yet</div>
+                ) : (
+                  pulses.lines.map((p) => (
+                    <div key={p.id} className="flex items-center gap-3 border-b border-divider px-5 py-1.5 last:border-b-0">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: p.status === 'sent' ? '#4ade80' : p.status === 'failed' ? '#dc2626' : '#fde047' }} />
+                      <span className="w-[150px] shrink-0 text-muted">
+                        {new Date(p.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className="w-[170px] shrink-0 truncate text-fg">{p.event}</span>
+                      <span className="w-[90px] shrink-0 truncate text-accent">{p.dd_number ?? ''}</span>
+                      <span className="min-w-0 flex-1 truncate" style={{ color: p.status === 'failed' ? '#ef4444' : undefined }}>
+                        {p.status === 'sent' ? `delivered · ${p.response_code}` : p.status === 'failed' ? `gave up · ${p.last_error ?? ''}` : p.attempts > 0 ? `retrying · ${p.last_error ?? ''}` : 'sending'}
+                      </span>
+                      {p.status !== 'sent' ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className="shrink-0 text-accent underline"
+                          onClick={async () => {
+                            await run(() => resendPulse(p.id));
+                            setTimeout(() => void loadPulses(c.id), 12000);
+                          }}
+                        >
+                          resend
+                        </button>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : null}
           </Card>
         ))}
       </div>

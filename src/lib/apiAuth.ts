@@ -59,6 +59,8 @@ export function fromDbError(error: { code?: string; message?: string }) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function publicOrder(o: any) {
   return {
+    dicedrop_order_id: o.dd_number,
+    fulfilled_by: 'DiceDrop',
     id: o.id,
     status: o.status,
     cancel_requested: o.cancel_requested,
@@ -75,6 +77,8 @@ export function publicOrder(o: any) {
     est_cost: o.est_cost,
     buy_cost: o.buy_cost,
     buy_tax: o.buy_tax,
+    buy_shipping: o.buy_shipping ?? null,
+    delivery_window: o.metadata?.checkout?.delivery_estimate ?? null,
     profit: o.profit,
     amazon_order_id: o.amazon_order_id,
     tracking_number: o.tracking_number,
