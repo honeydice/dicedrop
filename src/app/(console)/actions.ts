@@ -520,19 +520,6 @@ export async function updateSelector(key: string, value: string): Promise<Result
   }
 }
 
-/** The gift note added to every order at checkout, when Amazon offers gift options for the item. */
-export async function saveGift(enabled: boolean, from: string, message: string): Promise<Result> {
-  try {
-    const ctx = await operatorDb();
-    if (!ctx) return DENIED;
-    if (enabled && !message.trim()) return { ok: false, error: 'Add a gift message, or switch gift off.' };
-    const { error } = await ctx.db.from('platform_settings').update({ gift_enabled: enabled, gift_from: from.trim().slice(0, 40), gift_message: message.trim().slice(0, 240) }).eq('id', 1);
-    return done(error);
-  } catch {
-    return FAILED;
-  }
-}
-
 export async function setAccountsPerBox(count: number): Promise<Result> {
   try {
     const ctx = await operatorDb();

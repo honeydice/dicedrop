@@ -70,7 +70,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   const [open, setOpen] = useState('');
   const [busy, setBusy] = useState('');
   const [testOpen, setTestOpen] = useState(false);
-  const [test, setTest] = useState({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '' });
+  const [test, setTest] = useState({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '', gift: 'true', gift_from: '', gift_message: '' });
   const [shot, setShot] = useState<{ title: string; taken_at: string; note: string | null; image: string } | null>(null);
 
   const rpc = async (id: string, fn: string, args: Record<string, unknown>): Promise<unknown | null> => {
@@ -183,9 +183,9 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
               autoComplete="off"
               onSubmit={async (e) => {
                 e.preventDefault();
-                const ok = await rpc('new', 'dd_ops_create_test_order', { p: test });
+                const ok = await rpc('new', 'dd_ops_create_test_order', { p: { ...test, gift: test.gift_message.trim() ? 'true' : 'false' } });
                 if (ok) {
-                  setTest({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '' });
+                  setTest({ item: '', quantity: '1', ship_name: '', ship_line1: '', ship_line2: '', ship_city: '', ship_state: '', ship_postal: '', ship_phone: '', gift: 'true', gift_from: '', gift_message: '' });
                   setTestOpen(false);
                   setTab('all');
                 }
@@ -202,6 +202,8 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                   ['ship_city', 'City', 'sm:col-span-3', ''],
                   ['ship_state', 'State (2 letters)', 'sm:col-span-1', 'TX'],
                   ['ship_postal', 'Zip', 'sm:col-span-2', ''],
+                  ['gift_from', 'Gift from (blank = not a gift)', 'sm:col-span-2', 'DiceDrop'],
+                  ['gift_message', 'Gift message', 'sm:col-span-4', ''],
                 ] as const
               ).map(([key, text, span, hint]) => (
                 <div key={key} className={span}>
@@ -212,7 +214,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                     id={`t-${key}`}
                     value={test[key]}
                     placeholder={hint}
-                    maxLength={key === 'ship_state' ? 2 : key === 'item' ? 400 : 80}
+                    maxLength={key === 'ship_state' ? 2 : key === 'item' ? 400 : key === 'gift_message' ? 240 : 80}
                     onChange={(e) => setTest({ ...test, [key]: e.target.value })}
                     className={`${field} ${key === 'item' ? 'font-mono' : ''}`}
                   />

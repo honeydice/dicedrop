@@ -70,6 +70,12 @@ export async function POST(req: Request) {
     const metadata =
       body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : {};
 
+    // Gift is per order: { "gift": { "message": "...", "from": "..." } }, or the flat gift / gift_message / gift_from fields.
+    const giftBox = body.gift && typeof body.gift === 'object' && !Array.isArray(body.gift) ? (body.gift as Record<string, unknown>) : null;
+    const giftMessage = str(giftBox ? giftBox.message : body.gift_message);
+    const giftFrom = str(giftBox ? giftBox.from : body.gift_from);
+    const giftOn = giftBox ? giftBox.enabled !== false && Boolean(giftMessage) : body.gift === true || body.gift === 'true' || body.gift === 'yes';
+
     const order = {
       source: str(body.source) ?? 'ebay',
       order_number: orderNumber,
@@ -95,6 +101,9 @@ export async function POST(req: Request) {
       sale_fees: num(body.sale_fees),
       est_cost: num(body.est_cost),
       metadata,
+      gift: giftOn ? 'true' : 'false',
+      gift_message: giftMessage,
+      gift_from: giftFrom,
     };
 
     const { data, error } = await auth.db.rpc('dd_api_create_order', { p_key: auth.key, p_order: order });
