@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.17.2"
+VERSION = "0.17.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1578,6 +1578,13 @@ def check_order(page, order):
     found = re.search(r"((?:Arriving|Now expected|Delivered)[^.]{3,60})", card_words + " " + words)
     if found and result["state"] != "cancelled":
         result["delivery_estimate"] = found.group(1).strip()[:90]
+    if result["state"] != "cancelled":
+        # Amazon words the date several ways; take just the date part when it is there.
+        dated = re.search(r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery|Delivery|Delivered):?\s+(?:today|tomorrow|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))", card_words + " " + words)
+        if dated:
+            result["delivery_estimate"] = " ".join(dated.group(1).split())[:90]
+        elif not result["delivery_estimate"]:
+            log("no delivery date found for " + number + " (in the list: " + str(card is not None) + "); the page says: " + " ".join(words.split())[:700])
     result["screenshot"] = picture(page, card_only=False)
     return result
 
