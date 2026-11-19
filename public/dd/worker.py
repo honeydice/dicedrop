@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.10.2"
+VERSION = "0.10.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -811,45 +811,65 @@ def add_address_at_checkout(page, ship):
             time.sleep(0.5)
     pause(1.0, 2.0)
 
+    def choose_state():
+        state = (ship.get("state") or "").upper()
+        for selector in ["select#address-ui-widgets-enterAddressStateOrRegion-dropdown-nativeId", "select[name='address-ui-widgets-enterAddressStateOrRegion']"]:
+            try:
+                if page.locator(selector).count() > 0:
+                    page.locator(selector).first.select_option(state, force=True)
+                    return True
+            except Exception:
+                continue
+        try:
+            page.get_by_label("State", exact=True).first.select_option(state)
+            return True
+        except Exception:
+            pass
+        if visible(page, "#address-ui-widgets-enterAddressStateOrRegion"):
+            first_visible(page, "#address-ui-widgets-enterAddressStateOrRegion").click()
+            pause()
+            option = page.locator("a.a-dropdown-link", has_text=STATES.get(state, state)).first
+            if option.is_visible():
+                option.click()
+                return True
+        return False
+
+    def step_away():
+        """Close Amazon's address suggestions by clicking the form's own title. Escape would close the whole form."""
+        for words in ["Enter a new shipping address", "Add an address", "Full name (First and Last name)"]:
+            try:
+                title = page.get_by_text(words, exact=False).first
+                if title.is_visible():
+                    title.click()
+                    pause(0.4, 0.8)
+                    return
+            except Exception:
+                continue
+
     fill_by(page, [prefix + "FullName"], "Full name", ship["name"])
     fill_by(page, [prefix + "PhoneNumber"], "Phone number", ship.get("phone") or "5125550100", required=False)
+    # The street goes in first; Amazon then offers suggestions. Click away from them, then set the rest by hand
+    # so the city, state, and ZIP are exactly what the buyer gave.
     fill_by(page, [prefix + "Line1"], "Street address", ship["line1"])
-    pause(0.6, 1.0)
-    page.keyboard.press("Escape")  # close Amazon's address suggestions list without closing the form
-    pause(0.3, 0.6)
+    step_away()
     if not form_open():
         raise Stop("Amazon's address form closed while it was being filled in." + describe(page))
     fill_by(page, [prefix + "Line2"], "Unit or suite number", ship.get("line2") or "", required=False)
+    step_away()
     fill_by(page, [prefix + "City"], "City", ship["city"])
-
-    state = (ship.get("state") or "").upper()
-    picked = False
-    for selector in ["select#address-ui-widgets-enterAddressStateOrRegion-dropdown-nativeId", "select[name='address-ui-widgets-enterAddressStateOrRegion']"]:
-        try:
-            if page.locator(selector).count() > 0:
-                page.locator(selector).first.select_option(state, force=True)
-                picked = True
-                break
-        except Exception:
-            continue
-    if not picked:
-        try:
-            box = page.get_by_label("State", exact=True).first
-            box.select_option(state)
-            picked = True
-        except Exception:
-            pass
-    if not picked and visible(page, "#address-ui-widgets-enterAddressStateOrRegion"):
-        first_visible(page, "#address-ui-widgets-enterAddressStateOrRegion").click()
-        pause()
-        option = page.locator("a.a-dropdown-link", has_text=STATES.get(state, state)).first
-        if option.is_visible():
-            option.click()
-            picked = True
-    if not picked:
+    if not choose_state():
         raise Stop("Could not choose the state on Amazon's address form." + describe(page))
     pause(0.4, 0.8)
     fill_by(page, [prefix + "PostalCode"], "ZIP Code", ship["postal_code"])
+    step_away()
+    # Make sure a suggestion did not overwrite the street.
+    try:
+        street = first_visible(page, prefix + "Line1")
+        if street is not None and street.input_value(timeout=2000).strip().lower() != ship["line1"].strip().lower():
+            fill_by(page, [prefix + "Line1"], "Street address", ship["line1"])
+            step_away()
+    except Exception:
+        pass
     pause()
 
     if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']", "span:has-text('Use this address') input", "input[type='submit'][aria-labelledby*='submit-button']"]):
