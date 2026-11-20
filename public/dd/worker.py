@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.20.0"
+VERSION = "0.20.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1211,6 +1211,12 @@ def verify_payment(page, label):
         pass
     current_job["verify_seen"] = json.dumps(seen)[:1800]
     if target is None:
+        # Keep a picture of exactly what the bank / Amazon is asking for, so a person can see it.
+        try:
+            current_job["verify_shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
+        except Exception:
+            current_job["verify_shot"] = ""
+        log("verify payment at checkout: nothing to fill in. frames: " + ", ".join(sorted({f.url.split("?")[0][-70:] for f in page.frames}))[:600])
         return "Amazon asked to verify the payment, but showed no fields to fill in (it may want an approval from the bank or card app)"
 
     card = call("/api/worker/v1/accounts/card", {"account": label})
@@ -1608,6 +1614,8 @@ def order_page_ok(page, number, tracking=False):
     try:
         low = page_words(page, 4000).lower()
         if "unable to load" in low:
+            return False
+        if "/ap/signin" in page.url or "sign in or create account" in low or "enter mobile number or email" in low:
             return False
         if number in page.url or number in page.content():
             return True
@@ -2052,6 +2060,15 @@ def cart_only_job(job):
                         log("after ordering: could not look at the order: " + str(failure)[:200])
                 if not seen.get("delivery_estimate") and current_job.get("thankyou_estimate"):
                     seen["delivery_estimate"] = current_job["thankyou_estimate"]
+                if current_job.get("verify_note") and seen.get("state") == "ordered" and not seen.get("verified"):
+                    # Amazon or the bank asked to confirm the payment during checkout and it was not answered.
+                    # The order exists, but Amazon cancels these if the payment is not confirmed: say so now.
+                    seen["state"] = "verify"
+                    seen["note"] = "Verify Payment"
+                    seen["attempted"] = False
+                    seen["verify_detail"] = "the bank asked to confirm this payment at checkout; Amazon cancels the order if it is not confirmed"
+                    if current_job.get("verify_shot"):
+                        seen["screenshot"] = current_job["verify_shot"]
                 current_job["shot"] = seen.get("screenshot", "")
                 log("after ordering: " + str(seen.get("state")) + ", estimate '" + str(seen.get("delivery_estimate")) + "', picture " + ("taken" if seen.get("screenshot") else "missing"))
                 if seen.get("state") == "verify" or seen.get("delivery_estimate") or seen.get("screenshot"):
@@ -2086,6 +2103,7 @@ def cart_only_job(job):
         ship_log("job", "run " + str(job.get("order_number")) + " (" + str(job.get("run_kind")) + ")")
         current_job["shot"] = ""
         current_job["verify_note"] = ""
+        current_job["verify_shot"] = ""
         current_job["verify_seen"] = ""
         current_job["whole_page"] = False
         current_job["text"] = ""
