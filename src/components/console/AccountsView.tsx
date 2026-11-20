@@ -12,7 +12,7 @@ import { AccountModal } from './AccountModal';
 type Filter = 'all' | 'ready' | 'attention' | 'paused' | 'unassigned';
 
 function needsAttention(a: OpsAccount): boolean {
-  return Boolean(a.hold_reason) || a.status === 'locked' || a.session_state === 'needs_sign_in' || a.session_state === 'verification' || a.session_state === 'locked';
+  return Boolean(a.hold_reason) || (a.browser_note ?? '').startsWith('NEEDS YOU') || a.status === 'locked' || a.session_state === 'needs_sign_in' || a.session_state === 'verification' || a.session_state === 'locked';
 }
 
 function isReady(a: OpsAccount): boolean {
@@ -22,6 +22,7 @@ function isReady(a: OpsAccount): boolean {
 /** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
 function signIn(a: OpsAccount): { text: string; color: string } {
   if (a.in_use_elsewhere) return { text: 'open on another computer · worker waiting', color: TONE.warn };
+  if (a.browser_state === 'open' && (a.browser_note ?? '').startsWith('NEEDS YOU')) return { text: 'NEEDS YOU · open the live browser', color: TONE.bad };
   if (a.browser_state) return { text: a.browser_state === 'open' ? 'browser open · in use by hand' : 'opening browser', color: 'rgb(var(--accent))' };
   if (a.hold_reason) return { text: 'on hold · verify account', color: TONE.bad };
   if (a.signin_requested_at) return { text: a.signin_note ?? 'signing in', color: 'rgb(var(--accent))' };
@@ -485,6 +486,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                       </a>
                     ) : a.browser_state ? (
                       <span className="font-mono text-xs text-muted">opening browser · {a.browser_note ?? ''}</span>
+                    ) : null}
+                    {a.browser_state === 'open' && (a.browser_note ?? '').startsWith('NEEDS YOU') ? (
+                      <span className="text-[13px]" style={{ color: TONE.bad }}>
+                        {a.browser_note}
+                      </span>
                     ) : null}
                     {a.box_online !== true ? <span className="font-mono text-xs text-muted">vps offline</span> : null}
                   </div>

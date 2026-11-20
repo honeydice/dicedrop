@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.26.1"
+VERSION = "0.27.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1895,6 +1895,8 @@ def place_order(page, label=""):
     on_confirmation = False
     confirmed_duplicate = False
     verify_tried = False
+    handed_over = False
+    handover_look = [0.0]
     started = time.time()
     last_look = started
     deadline = started + 240
@@ -1918,6 +1920,31 @@ def place_order(page, label=""):
                 confirmed_duplicate = True
                 current_job["duplicate_confirmed"] = True
                 deadline = time.time() + 240
+        if not handed_over and human_check(page):
+            # Amazon wants a person ("I am human"). The worker does not answer that: it shows the browser to the operator
+            # and waits. The person ticks the box (and presses Place your order again if Amazon returns to checkout).
+            handed_over = True
+
+            def placed_now():
+                nonlocal order_id, on_confirmation
+                for tab in page.context.pages:
+                    try:
+                        if not tab.is_closed() and "thankyou" in tab.url.lower():
+                            on_confirmation = True
+                            return True
+                    except Exception:
+                        pass
+                if time.time() - handover_look[0] >= 15:
+                    handover_look[0] = time.time()
+                    order_id = new_in_history() or order_id
+                return bool(order_id)
+
+            needs_person(page, label, "Amazon asks \"I am human\" before placing this order. Tick the box; if it returns to checkout, press Place your order.", placed_now)
+            if on_confirmation or order_id:
+                break
+            deadline = max(deadline, time.time() + 45)
+            last_look = time.time() - 15
+            continue
         if "/cpe/" in address and not verify_tried:
             # "Verify payment": answer it before doing anything else, or Amazon cancels the order later.
             verify_tried = True
@@ -2731,11 +2758,17 @@ def warm_up_browse(page, minutes):
         if box is None:
             page.goto("https://www.amazon.com/s?k=" + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
         else:
-            box.click()
-            box.fill("")
-            box.press_sequentially(term, delay=random.randint(70, 140))
-            pause(0.4, 1.0)
-            box.press("Enter")
+            try:
+                box.click(timeout=6000)
+                box.fill("")
+                box.press_sequentially(term, delay=random.randint(70, 140))
+                pause(0.4, 1.0)
+                box.press("Enter")
+            except Stop:
+                raise
+            except Exception:
+                # Something is covering the search box (a pop-up): go to the results directly instead.
+                page.goto("https://www.amazon.com/s?k=" + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
         settle(page)
         searched += 1
         scroll(random.randint(2, 4))
@@ -3024,7 +3057,7 @@ LIVE_KEYS = {" ": "Space", "Esc": "Escape", "Del": "Delete", "Left": "ArrowLeft"
 LIVE_IGNORED_KEYS = ("Unidentified", "Dead", "Process", "AltGraph", "CapsLock", "NumLock", "ScrollLock", "ContextMenu")
 
 
-def live_session(page, secrets, label, view, announce):
+def live_session(page, secrets, label, view, announce, until=None, idle_minutes=None, max_minutes=None):
     """Runs on the thread that owns the browser: plays the waiting clicks and keys, then takes a new picture, over and over."""
     context = page.context
     current, known = page, len(context.pages)
@@ -3097,11 +3130,22 @@ def live_session(page, secrets, label, view, announce):
 
     announce()
     info_at = 0.0
+    until_at = time.time()
     while not view.closed:
         now = time.time()
         batch = []
-        if now - view.last_input > LIVE_IDLE_MINUTES * 60 or now - started > LIVE_MAX_MINUTES * 60:
+        if now - view.last_input > (idle_minutes or LIVE_IDLE_MINUTES) * 60 or now - started > (max_minutes or LIVE_MAX_MINUTES) * 60:
             break
+        if until is not None and now - until_at > 1.5:
+            # The worker opened this view because Amazon asked for a person: it ends by itself once that is answered.
+            until_at = now
+            try:
+                if until():
+                    break
+            except Stop:
+                raise
+            except Exception:
+                pass
         try:
             pages = [p for p in context.pages if not p.is_closed()]
             if not pages:
@@ -3158,6 +3202,80 @@ def live_session(page, secrets, label, view, announce):
         except Exception:
             pass
     return int((time.time() - started) / 60)
+
+
+def human_check(page):
+    """Amazon's "prove you are a person" page ("Check the box to continue. I am human"). The worker never answers it itself."""
+    try:
+        address = page.url.lower()
+        if "/checkpoint" in address or "/errors/validatecaptcha" in address:
+            return True
+        words = page_words(page, 500).lower()
+        return "i am human" in words or "check the box to continue" in words or "enter the characters you see" in words
+    except Exception:
+        return False
+
+
+def needs_person(page, label, why, until, minutes=20):
+    """Amazon is asking for a person. The worker keeps this same browser open, shows it live to the operator
+    (the account shows "Go to live browser" in DiceDrop), and waits until the person has answered or the time is up.
+    Returns True when `until()` came true."""
+    import http.server
+
+    answered = [False]
+
+    def done():
+        if until():
+            answered[0] = True
+        return answered[0]
+
+    def tell(**fields):
+        try:
+            return call("/api/worker/v1/accounts/browser", dict(fields, account=label))
+        except Exception as failure:
+            log("could not report the hand-over for " + label + ": " + str(failure)[:160])
+            return {}
+
+    view = LiveView(os.urandom(18).hex(), label)
+    view.info["note"] = why
+    server, tunnel = None, None
+    try:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), live_handler(view))
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        tunnel, address = open_tunnel(server.server_address[1])
+        note = current_job.get("progress")
+
+        def watch_for_close():
+            while not view.closed:
+                if tell(state="open").get("close"):
+                    view.close()
+                    return
+                time.sleep(10)
+
+        def announce():
+            tell(state="needs_you", url=address + "/" + view.token + "/", note="NEEDS YOU · " + why)
+            log("needs a person on " + label + ": " + why + " (live view open for " + str(minutes) + " minutes)")
+            if note:
+                try:
+                    note(note="NEEDS YOU · " + why + " · Accounts > " + label + " > Go to live browser")
+                except Exception:
+                    pass
+            threading.Thread(target=watch_for_close, daemon=True).start()
+
+        live_session(page, {}, label, view, announce, until=done, idle_minutes=minutes, max_minutes=minutes)
+    except Stop as failure:
+        log("hand-over for " + label + " could not be offered: " + str(failure)[:200])
+    finally:
+        view.close()
+        for closer in (lambda: server and server.shutdown(), lambda: tunnel and tunnel.terminate()):
+            try:
+                closer()
+            except Exception:
+                pass
+        tell(state="closed", note="answered by hand" if answered[0] else "nobody answered in time")
+    log("hand-over for " + label + (": answered" if answered[0] else ": not answered"))
+    return answered[0]
 
 
 def live_browser_job(label):
@@ -3268,6 +3386,7 @@ def cart_only_job(job):
 
     try:
         current_job["text"] = "cart run " + job.get("order_number", "")
+        current_job["progress"] = progress
         current_job["whole_page"] = True
         current_job["place_clicked"] = False
         current_job["duplicate_confirmed"] = False
