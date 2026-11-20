@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.22.3"
+VERSION = "0.22.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -592,6 +592,57 @@ def restore_stderr(saved):
     return detail
 
 
+DEVICE_JS = """() => {
+  let gl = '';
+  try {
+    const c = document.createElement('canvas').getContext('webgl');
+    const x = c.getExtension('WEBGL_debug_renderer_info');
+    gl = c.getParameter(x.UNMASKED_VENDOR_WEBGL) + ' / ' + c.getParameter(x.UNMASKED_RENDERER_WEBGL);
+  } catch (e) { gl = 'none'; }
+  return {
+    webdriver: navigator.webdriver, ua: navigator.userAgent, platform: navigator.platform,
+    uaPlatform: navigator.userAgentData ? navigator.userAgentData.platform : '', cores: navigator.hardwareConcurrency, memory: navigator.deviceMemory,
+    languages: (navigator.languages || []).join(','), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    screen: screen.width + 'x' + screen.height + ' avail ' + screen.availWidth + 'x' + screen.availHeight + ' window ' + window.outerWidth + 'x' + window.outerHeight + ' dpr ' + devicePixelRatio,
+    webgl: gl, plugins: navigator.plugins.length, chrome: typeof window.chrome, touch: navigator.maxTouchPoints,
+  };
+}"""
+
+
+def device_report(page, label):
+    """What a website can see about this account's browser and connection: where the proxy address is, and
+    whether the browser's time zone, language, screen and graphics agree with it. Read from a neutral site, for the log."""
+    try:
+        page.goto("https://ipinfo.io/json", wait_until="domcontentloaded", timeout=45000)
+        where = json.loads(page.inner_text("body"))
+    except Exception as failure:
+        where = {"error": str(failure)[:80]}
+    try:
+        seen = page.evaluate(DEVICE_JS)
+    except Exception as failure:
+        seen = {"error": str(failure)[:80]}
+    flags = []
+    if where.get("country") and where.get("country") != "US":
+        flags.append("the proxy address is located in " + str(where.get("country")) + ", not the US")
+    if where.get("timezone") and seen.get("timezone") and where["timezone"] != seen["timezone"]:
+        flags.append("browser time zone " + str(seen["timezone"]) + " does not match the address's " + str(where["timezone"]))
+    if seen.get("webdriver"):
+        flags.append("the browser says it is automated (webdriver)")
+    if any(word in str(seen.get("webgl", "")).lower() for word in ("swiftshader", "llvmpipe", "software", "none")):
+        flags.append("graphics are a server's software renderer: " + str(seen.get("webgl"))[:70])
+    if "Windows" in str(seen.get("ua", "")) and "Win" not in str(seen.get("platform", "")):
+        flags.append("says Windows but the platform reads " + str(seen.get("platform")))
+    line = ("device check " + label + ": address " + str(where.get("ip", "")) + " " + str(where.get("city", "")) + ", " + str(where.get("region", "")) + ", " + str(where.get("country", ""))
+            + " | " + str(where.get("org", "")) + " | tz " + str(where.get("timezone", "")) + " || browser: " + json.dumps(seen)[:700]
+            + " || flags: " + ("; ".join(flags) if flags else "none"))
+    log(line)
+    try:
+        call("/api/worker/v1/log", {"type": "device", "text": line[:3500]})
+    except Exception:
+        pass
+    return flags
+
+
 class Stop(Exception):
     """A clean, explained stop: the message is shown to the operator as is."""
 
@@ -652,6 +703,12 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
                 if not exit_ip or (box_ip and exit_ip == box_ip):
                     raise Stop("The proxy is not being used (the browser shows this box's own address). Stopped before opening Amazon.")
                 report(label, exit_ip=exit_ip)
+                if reason == "sign-in":
+                    stage[0] = "checking what the browser looks like"
+                    try:
+                        device_report(page, label)
+                    except Exception:
+                        pass
                 result = work(page, secrets, stage)
             finally:
                 # An order run that is stopping: one AI look at the page, so the error says in plain words what Amazon wants.
