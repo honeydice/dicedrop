@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.28.4"
+VERSION = "0.28.5"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -763,11 +763,29 @@ def mlx_launcher_up():
         return False
 
 
+def ensure_graphics():
+    """The VPS has no graphics card, so the browser reported no graphics at all, unlike the same profile on a normal
+    computer. This installs the software graphics libraries once, so the browser can draw the way it does elsewhere."""
+    marker = "/var/lib/dicedrop-graphics-0"
+    if os.path.exists(marker):
+        return
+    env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+    try:
+        subprocess.call(["apt-get", "update", "-qq"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for name in ("libgl1", "libgl1-mesa-dri", "libglx-mesa0", "libegl1", "libgles2", "libvulkan1", "mesa-vulkan-drivers"):
+            subprocess.call(["apt-get", "install", "-y", "-qq", "--no-install-recommends", name], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        open(marker, "w").write("installed")
+        log("graphics libraries installed on this box")
+    except Exception as failure:
+        log("could not install the graphics libraries: " + str(failure)[:160])
+
+
 def ensure_mlx_agent():
     """Installs (once) and starts Multilogin's agent in this container, on a virtual screen."""
     import shutil
 
     with mlx_guard:
+        ensure_graphics()
         if mlx_launcher_up():
             return
         env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
