@@ -342,6 +342,30 @@ export interface AccessLine {
   box: string | null;
 }
 
+/** Ordering on or off for one account. Off: it stays signed in and its orders are still checked, but it gets no new orders. */
+export async function setOrdering(id: string, on: boolean): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_ordering', { p_account: id, p_on: on });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** Removes an account with its saved secrets, logs and screenshots. Its orders stay. */
+export async function removeAccount(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_delete_account', { p_account: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Saves the Multilogin sign-in the boxes use to open Multilogin profiles (kept encrypted in the database vault). */
 export async function saveMultilogin(email: string, password: string): Promise<Result> {
   try {

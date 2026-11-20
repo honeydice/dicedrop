@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, setAccountEngine, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, removeAccount, setOrdering, setAccountEngine, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -57,7 +57,7 @@ function tone(a: OpsAccount): string {
 /** One titled block inside an expanded account. */
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-line bg-panel">
+    <section className="min-w-0 rounded-xl border border-line bg-panel">
       <div className="border-b border-line px-4 py-2.5 font-mono text-xs text-muted">{title}</div>
       <div className="px-4 py-4">{children}</div>
     </section>
@@ -342,7 +342,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     </span>
                   </span>
                   <span className="hidden min-w-0 flex-1 truncate font-mono text-xs text-muted sm:block">
-                    {[a.login_email, a.box_name ?? 'no vps', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'].filter(Boolean).join('  ·  ')}
+                    {[a.login_email, a.box_name ?? 'no vps', a.engine === 'multilogin' ? 'Multilogin' : 'Kameleo'].filter(Boolean).join('  ·  ')}
+                    {a.ordering_enabled === false ? <span className="ml-3" style={{ color: TONE.warn }}>ordering off</span> : null}
                     {a.last_error ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
                     {a.current_order ? <span className="ml-3">placing {a.current_order}</span> : null}
                   </span>
@@ -393,210 +394,166 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
 
               {isOpen ? (
                 <div className="border-t border-divider bg-raised/30 px-3 py-4 sm:px-6 sm:py-5">
-                  <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
-                    <Panel title="vps">
-                      <div className="flex items-center gap-3">
+                  {/* One row of controls: the ordering switch, one Actions menu, and the live browser link when it is open. */}
+                  <div className="mb-4 flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-pressed={a.ordering_enabled !== false}
+                      className={btn}
+                      style={a.ordering_enabled === false ? { borderColor: TONE.warn, color: TONE.warn } : { borderColor: TONE.good, color: TONE.good }}
+                      onClick={() => void run(() => setOrdering(a.id, a.ordering_enabled === false))}
+                    >
+                      {a.ordering_enabled === false ? 'Ordering: OFF · checks only' : 'Ordering: ON'}
+                    </button>
+                    <select
+                      aria-label={`Actions for ${a.label}`}
+                      disabled={busy}
+                      className={`${btnAccent} max-w-[230px]`}
+                      value=""
+                      onChange={async (e) => {
+                        const choice = e.target.value;
+                        e.target.value = '';
+                        if (choice === 'edit') setEditId(a.id);
+                        else if (choice === 'signin') void run(() => requestSignin(a.id));
+                        else if (choice === 'browser') void run(() => setLiveBrowser(a.id, !a.browser_state));
+                        else if (choice === 'pause') void patch(a.id, { status: a.status === 'paused' ? 'active' : 'paused' });
+                        else if (choice === 'hold') void run(() => clearHold(a.id));
+                        else if (choice.startsWith('warm:')) void run(() => setWarmup(a.id, Number(choice.slice(5))));
+                        else if (choice === 'kameleo') void run(() => setAccountEngine(a.id, 'kameleo', ''));
+                        else if (choice === 'multilogin') {
+                          const name = window.prompt('Name of this account\'s profile in Multilogin (exactly as it shows there):', a.mlx_profile ?? a.label);
+                          if (name && name.trim()) void run(() => setAccountEngine(a.id, 'multilogin', name.trim()));
+                        } else if (choice === 'logs') {
+                          if (logs?.id === a.id) return setLogs(null);
+                          setLogs({ id: a.id, lines: null });
+                          const lines = await getAccountLog(a.id);
+                          if (lines) setLogs({ id: a.id, lines });
+                          else {
+                            setLogs(null);
+                            setError('The log could not be loaded. Try again.');
+                          }
+                        } else if (choice === 'shot') {
+                          const result = await getSnapshot(a.id);
+                          if (result) setShot({ label: a.label, ...result });
+                          else setError('That screenshot could not be loaded. Try again.');
+                        } else if (choice === 'pw') {
+                          if (pw?.id === a.id) return setPw(null);
+                          const value = await getAccountPassword(a.id);
+                          if (value) setPw({ id: a.id, value, copied: false });
+                          else setError('The password could not be loaded. Try again.');
+                        } else if (choice === 'remove') {
+                          if (window.confirm(`Remove ${a.label} from DiceDrop? Its saved password, logs and screenshots are deleted. Its orders stay in the Orders list.`)) {
+                            void run(() => removeAccount(a.id));
+                          }
+                        }
+                      }}
+                    >
+                      <option value="">Actions</option>
+                      <option value="edit">Edit details</option>
+                      <option value="signin" disabled={Boolean(a.signin_requested_at) || a.box_online !== true}>
+                        {a.signin_requested_at ? 'Signing in…' : a.session_state === 'signed_in' ? 'Check sign-in' : 'Sign in now'}
+                      </option>
+                      <option value="browser" disabled={!a.browser_state && a.box_online !== true}>
+                        {a.browser_state === 'open' ? 'Close browser' : a.browser_state ? 'Cancel opening the browser' : 'Open browser (use by hand)'}
+                      </option>
+                      <option value="logs">{logs?.id === a.id ? 'Hide logs' : 'Logs'}</option>
+                      {a.snapshot_at ? <option value="shot">Last screenshot</option> : null}
+                      {a.password_set ? <option value="pw">{pw?.id === a.id ? 'Hide password' : 'Show password'}</option> : null}
+                      <optgroup label={isWarming(a) ? 'Warm-up (on)' : 'Warm-up'}>
+                        {[1, 2, 3, 5, 7].map((d) => (
+                          <option key={d} value={`warm:${d}`}>
+                            Warm up {d} day{d === 1 ? '' : 's'}
+                          </option>
+                        ))}
+                        {isWarming(a) ? <option value="warm:0">Turn warm-up off</option> : null}
+                      </optgroup>
+                      <optgroup label={a.engine === 'multilogin' ? 'Browser: Multilogin' : 'Browser: Kameleo'}>
+                        {a.engine === 'multilogin' ? <option value="kameleo">Switch to Kameleo</option> : null}
+                        <option value="multilogin">{a.engine === 'multilogin' ? 'Change Multilogin profile' : 'Switch to Multilogin'}</option>
+                      </optgroup>
+                      <optgroup label="Account">
+                        {a.hold_reason ? <option value="hold">Account verified · clear hold</option> : null}
+                        <option value="pause">{a.status === 'paused' ? 'Resume account' : 'Pause account (nothing opens it)'}</option>
+                        <option value="remove">Remove account</option>
+                      </optgroup>
+                    </select>
+                    {a.browser_state === 'open' && a.browser_url ? (
+                      <a href={a.browser_url} target="_blank" rel="noreferrer" className={btnAccent}>
+                        Go to live browser
+                      </a>
+                    ) : a.browser_state ? (
+                      <span className="font-mono text-xs text-muted">opening browser · {a.browser_note ?? ''}</span>
+                    ) : null}
+                    {a.box_online !== true ? <span className="font-mono text-xs text-muted">vps offline</span> : null}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <Panel title="setup">
+                      <Rows
+                        items={[
+                          ['amazon email', a.login_email ?? 'none'],
+                          ['browser', a.engine === 'multilogin' ? `Multilogin · ${a.mlx_profile ?? ''}${a.mlx_found ? '' : ' (not opened yet)'}` : `Kameleo${a.has_profile ? '' : ' (not opened yet)'}`],
+                          ['address', a.exit_ip_info ? a.exit_ip_info.replace(/^AS\d+\s+/, '').split(' · ').slice(0, 2).join(' · ') : a.exit_ip ?? (a.engine === 'multilogin' ? 'from the Multilogin profile' : a.proxy_label ?? 'no proxy')],
+                          ['card', a.card_bank ? cardLabel(a.card_bank, a.card_last4) : 'none'],
+                          ['password · two-step', `${a.password_set ? 'saved' : 'not set'} · ${a.totp_enabled ? 'on' : 'off'}`],
+                        ]}
+                      />
+                      <div className="mt-3 flex items-center gap-3">
                         <Dot color={a.box_id ? (a.box_online ? TONE.good : TONE.bad) : TONE.muted} />
-                        <span className="font-mono text-[16px] text-fg">{a.box_name ?? 'unassigned'}</span>
-                        {a.box_id ? (
-                          <span className="font-mono text-[13px]" style={{ color: a.box_online ? TONE.good : TONE.bad }}>
-                            {a.box_online ? 'online' : 'offline'}
-                          </span>
-                        ) : null}
+                        <label htmlFor={`bx-${a.id}`} className="font-mono text-xs text-muted">
+                          vps
+                        </label>
+                        <select id={`bx-${a.id}`} value={a.box_id ?? ''} disabled={busy} onChange={(e) => void patch(a.id, { box_id: e.target.value || null })} className={`${field} min-w-0 font-mono`}>
+                          <option value="">unassigned</option>
+                          {data.boxes.map((b) => {
+                            const n = data.accounts.filter((x) => x.box_id === b.id).length;
+                            return (
+                              <option key={b.id} value={b.id}>
+                                {b.name} · {n} account{n === 1 ? '' : 's'}
+                              </option>
+                            );
+                          })}
+                        </select>
                       </div>
-                      <label htmlFor={`bx-${a.id}`} className="mb-1.5 mt-4 block font-mono text-xs text-muted">
-                        move to
-                      </label>
-                      <select id={`bx-${a.id}`} value={a.box_id ?? ''} disabled={busy} onChange={(e) => void patch(a.id, { box_id: e.target.value || null })} className={`${field} font-mono`}>
-                        <option value="">unassigned</option>
-                        {data.boxes.map((b) => {
-                          const n = data.accounts.filter((x) => x.box_id === b.id).length;
-                          return (
-                            <option key={b.id} value={b.id}>
-                              {b.name} · {n} account{n === 1 ? '' : 's'}
-                            </option>
-                          );
-                        })}
-                      </select>
                     </Panel>
 
-                    <Panel title="orders / day">
-                      <div className="flex items-baseline gap-2 font-mono">
-                        <span className="text-[26px] leading-none text-fg">{a.orders_today}</span>
-                        <span className="text-[14px] text-muted">of {a.daily_order_cap} today</span>
-                      </div>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-chip" role="img" aria-label={`${a.orders_today} of ${a.daily_order_cap} orders used today`}>
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${Math.min(100, (Number(a.orders_today) / Math.max(1, Number(a.daily_order_cap))) * 100)}%`, background: full ? TONE.warn : 'rgb(var(--accent))' }}
-                        />
-                      </div>
-                      <div className="mt-4 flex items-center gap-2">
-                        <span className="mr-auto font-mono text-xs text-muted">daily limit</span>
+                    <Panel title="activity">
+                      <Rows
+                        items={[
+                          ['sign-in', `${sessionLabel(a.session_state)}${a.last_seen_at && now ? ` · seen ${timeAgo(a.last_seen_at, now)}` : ''}`],
+                          ['ordering', a.ordering_enabled === false ? 'off · order checks only' : isWarming(a) ? 'waiting for warm-up to end' : a.status === 'paused' ? 'paused' : 'on'],
+                          ['warm-up', warmupLeft(a)],
+                          ['waiting to ship', `${a.awaiting_tracking}${a.max_pending_orders ? ` of ${a.max_pending_orders}` : ''}`],
+                          ['open issues · all orders', `${a.open_issues} · ${a.orders_total}`],
+                          ['spent today', `${money(Number(a.spent_today))}${a.daily_spend_cap ? ` of ${money(Number(a.daily_spend_cap))}` : ''}`],
+                        ]}
+                      />
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className="mr-auto font-mono text-xs text-muted">
+                          orders today {a.orders_today} of {a.daily_order_cap}
+                        </span>
                         <button
                           type="button"
                           aria-label="Lower the daily limit by one"
                           disabled={busy || Number(a.daily_order_cap) <= 1}
-                          className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-edge bg-raised font-mono text-[18px] text-fg disabled:opacity-40"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-edge bg-raised font-mono text-[16px] text-fg disabled:opacity-40"
                           onClick={() => void patch(a.id, { daily_order_cap: Number(a.daily_order_cap) - 1 })}
                         >
                           −
                         </button>
-                        <span className="w-10 text-center font-mono text-[18px] text-fg">{a.daily_order_cap}</span>
+                        <span className="w-8 text-center font-mono text-[15px] text-fg">{a.daily_order_cap}</span>
                         <button
                           type="button"
                           aria-label="Raise the daily limit by one"
                           disabled={busy}
-                          className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-edge bg-raised font-mono text-[18px] text-fg disabled:opacity-40"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-edge bg-raised font-mono text-[16px] text-fg disabled:opacity-40"
                           onClick={() => void patch(a.id, { daily_order_cap: Number(a.daily_order_cap) + 1 })}
                         >
                           +
                         </button>
                       </div>
                     </Panel>
-
-                    <Panel title="identity">
-                      <Rows
-                        items={[
-                          ['email', a.login_email ?? 'none'],
-                          ['proxy', a.proxy_label ?? 'none'],
-                          ['card', a.card_bank ? cardLabel(a.card_bank, a.card_last4) : 'none'],
-                          ['password', a.password_set ? 'saved' : 'not set'],
-                          ['two-step', a.totp_enabled ? 'generating' : 'off'],
-                          ['access', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'],
-                        ]}
-                      />
-                    </Panel>
-
-                    <Panel title="activity">
-                      <Rows
-                        items={[
-                          ['spent today', `${money(Number(a.spent_today))}${a.daily_spend_cap ? ` of ${money(Number(a.daily_spend_cap))}` : ''}`],
-                          ['awaiting tracking', `${a.awaiting_tracking}${a.max_pending_orders ? ` of ${a.max_pending_orders}` : ''}`],
-                          ['open issues', String(a.open_issues)],
-                          ['orders all time', String(a.orders_total)],
-                          ['sign-in', sessionLabel(a.session_state)],
-                          ['outgoing ip', a.exit_ip ?? 'not checked yet'],
-                          ['address owner', a.exit_ip_info ?? 'not looked up yet'],
-                          ['browser', a.engine === 'multilogin' ? `Multilogin · ${a.mlx_profile ?? ''}${a.mlx_found ? '' : ' (not opened yet)'}` : 'Kameleo'],
-                          ['device identity', a.has_profile ? 'created' : 'not created yet'],
-                          ['last seen', a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'],
-                          ['warm-up', warmupLeft(a)],
-                        ]}
-                      />
-                    </Panel>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2.5">
-                    <button type="button" disabled={busy} className={btnAccent} onClick={() => setEditId(a.id)}>
-                      Edit details
-                    </button>
-                    <button type="button" disabled={busy} className={btn} onClick={() => void patch(a.id, { status: a.status === 'paused' ? 'active' : 'paused' })}>
-                      {a.status === 'paused' ? 'Resume account' : 'Pause account'}
-                    </button>
-                    <button type="button" disabled={busy || Boolean(a.signin_requested_at) || a.box_online !== true} className={btn} onClick={() => void run(() => requestSignin(a.id))}>
-                      {a.signin_requested_at ? 'Signing in' : a.session_state === 'signed_in' ? 'Check sign-in' : 'Sign in now'}
-                    </button>
-                    {a.snapshot_at ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        className={btn}
-                        onClick={async () => {
-                          const result = await getSnapshot(a.id);
-                          if (result) setShot({ label: a.label, ...result });
-                          else setError('That screenshot could not be loaded. Try again.');
-                        }}
-                      >
-                        View last screenshot
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className={btn}
-                      aria-expanded={logs?.id === a.id}
-                      onClick={async () => {
-                        if (logs?.id === a.id) return setLogs(null);
-                        setLogs({ id: a.id, lines: null });
-                        const lines = await getAccountLog(a.id);
-                        if (lines) setLogs({ id: a.id, lines });
-                        else {
-                          setLogs(null);
-                          setError('The log could not be loaded. Try again.');
-                        }
-                      }}
-                    >
-                      {logs?.id === a.id ? 'Hide logs' : 'Logs'}
-                    </button>
-                    {a.password_set ? (
-                      <button
-                        type="button"
-                        className={btn}
-                        onClick={async () => {
-                          if (pw?.id === a.id) return setPw(null);
-                          const value = await getAccountPassword(a.id);
-                          if (value) setPw({ id: a.id, value, copied: false });
-                          else setError('The password could not be loaded. Try again.');
-                        }}
-                      >
-                        {pw?.id === a.id ? 'Hide password' : 'Show password'}
-                      </button>
-                    ) : null}
-                    {a.browser_state === 'open' && a.browser_url ? (
-                      <a href={a.browser_url} target="_blank" rel="noreferrer" className={btnAccent}>
-                        Go to live browser
-                      </a>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={busy || (!a.browser_state && a.box_online !== true)}
-                      className={btn}
-                      onClick={() => void run(() => setLiveBrowser(a.id, !a.browser_state))}
-                    >
-                      {a.browser_state === 'open' ? 'Close browser' : a.browser_state ? `Opening browser · ${a.browser_note ?? ''} · cancel` : 'Open browser'}
-                    </button>
-                    {a.hold_reason ? (
-                      <button type="button" disabled={busy} className={btn} style={{ borderColor: TONE.bad, color: TONE.bad }} onClick={() => void run(() => clearHold(a.id))}>
-                        Account verified · clear hold
-                      </button>
-                    ) : null}
-                    <select
-                      aria-label="Browser"
-                      disabled={busy}
-                      className={btn}
-                      value=""
-                      onChange={(e) => {
-                        const choice = e.target.value;
-                        if (choice === 'kameleo') void run(() => setAccountEngine(a.id, 'kameleo', ''));
-                        if (choice === 'multilogin') {
-                          const name = window.prompt('Name of this account\'s profile in Multilogin (exactly as it shows there):', a.mlx_profile ?? a.label);
-                          if (name && name.trim()) void run(() => setAccountEngine(a.id, 'multilogin', name.trim()));
-                        }
-                      }}
-                    >
-                      <option value="">{a.engine === 'multilogin' ? 'Browser: Multilogin' : 'Browser: Kameleo'}</option>
-                      {a.engine === 'multilogin' ? <option value="kameleo">Switch to Kameleo</option> : null}
-                      <option value="multilogin">{a.engine === 'multilogin' ? 'Change Multilogin profile' : 'Switch to Multilogin'}</option>
-                    </select>
-                    <select
-                      aria-label="Warm-up"
-                      disabled={busy}
-                      className={btn}
-                      value=""
-                      onChange={(e) => {
-                        const days = Number(e.target.value);
-                        if (e.target.value !== '') void run(() => setWarmup(a.id, days));
-                      }}
-                    >
-                      <option value="">{isWarming(a) ? 'Warming up' : 'Warm-up'}</option>
-                      {[1, 2, 3, 5, 7].map((d) => (
-                        <option key={d} value={d}>
-                          {d} day{d === 1 ? '' : 's'}
-                        </option>
-                      ))}
-                      {isWarming(a) ? <option value="0">Turn off</option> : null}
-                    </select>
-                    {a.box_online !== true ? <span className="font-mono text-xs text-muted">sign-in needs this account&apos;s vps online</span> : null}
                   </div>
 
                   {a.hold_reason ? (
