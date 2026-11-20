@@ -342,6 +342,18 @@ export interface AccessLine {
   box: string | null;
 }
 
+/** Opens (or closes) the account's own VPS browser, to use by hand in a tab. */
+export async function setLiveBrowser(id: string, open: boolean): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_browser', { p_account: id, p_open: open });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Clears "on hold" on an account after it has been verified on Amazon, so it can take orders again. */
 export async function clearHold(id: string): Promise<Result> {
   try {

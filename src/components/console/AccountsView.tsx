@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -21,6 +21,7 @@ function isReady(a: OpsAccount): boolean {
 
 /** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
 function signIn(a: OpsAccount): { text: string; color: string } {
+  if (a.browser_state) return { text: a.browser_state === 'open' ? 'browser open · in use by hand' : 'opening browser', color: 'rgb(var(--accent))' };
   if (a.hold_reason) return { text: 'on hold · verify account', color: TONE.bad };
   if (a.signin_requested_at) return { text: a.signin_note ?? 'signing in', color: 'rgb(var(--accent))' };
   if (a.status === 'paused') return { text: 'paused', color: TONE.muted };
@@ -539,6 +540,19 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         {pw?.id === a.id ? 'Hide password' : 'Show password'}
                       </button>
                     ) : null}
+                    {a.browser_state === 'open' && a.browser_url ? (
+                      <a href={a.browser_url} target="_blank" rel="noreferrer" className={btnAccent}>
+                        Go to live browser
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={busy || (!a.browser_state && a.box_online !== true)}
+                      className={btn}
+                      onClick={() => void run(() => setLiveBrowser(a.id, !a.browser_state))}
+                    >
+                      {a.browser_state === 'open' ? 'Close browser' : a.browser_state ? `Opening browser · ${a.browser_note ?? ''} · cancel` : 'Open browser'}
+                    </button>
                     {a.hold_reason ? (
                       <button type="button" disabled={busy} className={btn} style={{ borderColor: TONE.bad, color: TONE.bad }} onClick={() => void run(() => clearHold(a.id))}>
                         Account verified · clear hold

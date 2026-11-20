@@ -172,6 +172,10 @@ export interface OpsAccount {
   /** Amazon has the account on hold (its own words), until it is verified. No orders are sent to it. */
   hold_reason?: string | null;
   hold_at?: string | null;
+  /** The account's VPS browser opened to use by hand: starting, opening, open (with its address), closing. */
+  browser_state?: string | null;
+  browser_url?: string | null;
+  browser_note?: string | null;
   warmup_until?: string | null;
   warmup_days?: number | null;
   warmup_last_at?: string | null;

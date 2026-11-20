@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.23.1"
+VERSION = "0.24.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2581,6 +2581,436 @@ def warm_up_job(label):
         job_lock.release()
 
 
+# ---------------------------------------------------------------- live browser (an account's browser, used by hand)
+#
+# "Open browser" in DiceDrop opens the account's own Kameleo browser on its own proxy and shows it live in a
+# browser tab: a picture of the page that refreshes several times a second, with every click, scroll and key
+# passed through. It is the same browser the worker later orders from. The view is reached over an encrypted
+# tunnel at an address only that session knows. While it is open the worker leaves the account alone.
+
+LIVE_IDLE_MINUTES = 30
+LIVE_MAX_MINUTES = 120
+
+VIEWER_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>DiceDrop live browser · __LABEL__</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0f1115;color:#e6e8ee;font:14px/1.3 system-ui,sans-serif}
+#bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px;background:#171a21;border-bottom:1px solid #2a2f3a;position:sticky;top:0;z-index:2}
+#bar b{margin-right:4px}button,select,input{font:inherit;color:#e6e8ee;background:#222734;border:1px solid #343b4a;border-radius:6px;padding:6px 10px;min-height:34px}
+button{cursor:pointer}button:hover{background:#2b3242}#url{flex:1;min-width:180px}#txt{width:180px}
+#done{border-color:#b33;color:#f88}#wrap{padding:8px;text-align:center}
+#view{max-width:100%;outline:2px solid #2a2f3a;cursor:default;touch-action:none;user-select:none;-webkit-user-drag:none}
+#view.on{outline-color:#4ade80}#note{padding:4px 8px;color:#9aa3b5;font-size:12px}
+</style></head><body>
+<div id="bar"><b>__LABEL__</b>
+<button id="back" title="Back">&#8592;</button><button id="reload" title="Reload">&#8635;</button>
+<input id="url" placeholder="address" autocomplete="off" spellcheck="false"><button id="go">Go</button>
+<select id="tabs" title="Tabs"></select>
+<button data-s="email">Type email</button><button data-s="password">Type password</button><button data-s="code">Type 2-step code</button>
+<input id="txt" placeholder="text to type or paste" autocomplete="off"><button id="send">Type it</button>
+<button id="done">Done · close browser</button></div>
+<div id="note">Click the page once (green outline), then use it like a normal browser. Clicks, scrolling and typing go to the account's browser on the VPS.</div>
+<div id="wrap"><img id="view" tabindex="0" alt="loading the browser..."></div>
+<script>
+const view=document.getElementById('view'),note=document.getElementById('note'),url=document.getElementById('url'),tabs=document.getElementById('tabs');
+let seq=0,pending=[],sending=false,over=false,lastMove=0,lastWheel=0,oldSrc='';
+function push(e){pending.push(e);flush()}
+async function flush(){if(sending||!pending.length)return;sending=true;const batch=pending;pending=[];
+  try{await fetch('input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:batch})})}catch(x){}
+  sending=false;if(pending.length)flush()}
+function at(ev){const r=view.getBoundingClientRect();return{x:Math.min(1,Math.max(0,(ev.clientX-r.left)/r.width)),y:Math.min(1,Math.max(0,(ev.clientY-r.top)/r.height))}}
+const BTN=['left','middle','right'];
+view.addEventListener('mousedown',e=>{e.preventDefault();view.focus();push({t:'down',b:BTN[e.button]||'left',...at(e)})});
+window.addEventListener('mouseup',e=>{if(document.activeElement===view)push({t:'up',b:BTN[e.button]||'left',...at(e)})});
+view.addEventListener('mousemove',e=>{const n=Date.now();if(n-lastMove<70)return;lastMove=n;push({t:'move',...at(e)})});
+view.addEventListener('contextmenu',e=>e.preventDefault());
+view.addEventListener('wheel',e=>{e.preventDefault();const n=Date.now();if(n-lastWheel<50)return;lastWheel=n;push({t:'wheel',dx:e.deltaX,dy:e.deltaY,...at(e)})},{passive:false});
+view.addEventListener('focus',()=>view.classList.add('on'));view.addEventListener('blur',()=>view.classList.remove('on'));
+view.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='v')return;e.preventDefault();push({t:'key',a:'down',k:e.key})});
+view.addEventListener('keyup',e=>{e.preventDefault();push({t:'key',a:'up',k:e.key})});
+view.addEventListener('paste',e=>{e.preventDefault();const t=(e.clipboardData||window.clipboardData).getData('text');if(t)push({t:'text',v:t,paste:true})});
+let touch=null;
+view.addEventListener('touchstart',e=>{const p=e.touches[0];touch={x:p.clientX,y:p.clientY,moved:false};e.preventDefault()},{passive:false});
+view.addEventListener('touchmove',e=>{const p=e.touches[0];if(!touch)return;const dy=touch.y-p.clientY,dx=touch.x-p.clientX;if(Math.abs(dy)+Math.abs(dx)>6){touch.moved=true;push({t:'wheel',dx:dx,dy:dy,...at(p)});touch.x=p.clientX;touch.y=p.clientY}e.preventDefault()},{passive:false});
+view.addEventListener('touchend',e=>{if(touch&&!touch.moved){const p={clientX:touch.x,clientY:touch.y};push({t:'down',b:'left',...at(p)});push({t:'up',b:'left',...at(p)})}touch=null;e.preventDefault()},{passive:false});
+document.getElementById('back').onclick=()=>push({t:'back'});document.getElementById('reload').onclick=()=>push({t:'reload'});
+function go(){let u=url.value.trim();if(!u)return;if(!/^https?:\/\//i.test(u))u='https://'+u;push({t:'nav',v:u});view.focus()}
+document.getElementById('go').onclick=go;url.addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+tabs.onchange=()=>push({t:'tab',i:Number(tabs.value)});
+document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{push({t:'secret',v:b.dataset.s});view.focus()});
+const txt=document.getElementById('txt');function sendText(){if(txt.value){push({t:'text',v:txt.value});txt.value='';view.focus()}}
+document.getElementById('send').onclick=sendText;txt.addEventListener('keydown',e=>{if(e.key==='Enter')sendText()});
+document.getElementById('done').onclick=()=>{if(confirm('Close this browser? The account stays signed in on the VPS.')){push({t:'close'});over=true;note.textContent='Closed. You can close this tab.'}};
+async function loop(){while(!over){try{const r=await fetch('frame?since='+seq,{cache:'no-store'});
+  if(r.status===410){over=true;note.textContent='This browser has been closed. You can close this tab.';break}
+  if(r.status===200){seq=Number(r.headers.get('X-Seq'))||seq;let info={};try{info=JSON.parse(decodeURIComponent(r.headers.get('X-Info')||'%7B%7D'))}catch(x){}
+    const src=URL.createObjectURL(await r.blob());view.src=src;if(oldSrc)URL.revokeObjectURL(oldSrc);oldSrc=src;
+    if(document.activeElement!==url)url.value=info.url||'';document.title=(info.title||'')+' · __LABEL__';
+    const want=(info.tabs||[]).map((t,i)=>i+'|'+t).join('\n');if(tabs.dataset.k!==want){tabs.dataset.k=want;tabs.innerHTML='';(info.tabs||[]).forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent='Tab '+(i+1)+': '+t;tabs.appendChild(o)})}
+    tabs.value=String(info.tab||0);if(info.note)note.textContent=info.note}
+  }catch(x){await new Promise(s=>setTimeout(s,800))}}}
+loop();
+</script></body></html>"""
+
+
+class LiveView:
+    """What the viewer page and the browser session share: the newest picture, and the clicks and keys waiting to be played."""
+
+    def __init__(self, token, label):
+        import queue
+
+        self.token, self.label = token, label
+        self.frame, self.seq = b"", 0
+        self.cond = threading.Condition()
+        self.events = queue.Queue()
+        self.info = {"url": "", "title": "", "tabs": [], "tab": 0, "note": ""}
+        self.closed = False
+        self.last_input = time.time()
+
+    def set_frame(self, data):
+        with self.cond:
+            self.frame = data
+            self.seq += 1
+            self.cond.notify_all()
+
+    def close(self):
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
+
+
+def live_handler(view):
+    import http.server
+    import urllib.parse
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args):
+            pass
+
+        def plain(self, status, body=b"", kind="text/plain", extra=None):
+            self.send_response(status)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Robots-Tag", "noindex")
+            for name, value in (extra or {}).items():
+                self.send_header(name, value)
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def rest(self):
+            path = urllib.parse.urlparse(self.path)
+            prefix = "/" + view.token
+            if path.path != prefix and not path.path.startswith(prefix + "/"):
+                return None, {}
+            return path.path[len(prefix):], urllib.parse.parse_qs(path.query)
+
+        def do_GET(self):
+            rest, query = self.rest()
+            if rest is None:
+                return self.plain(404, b"not found")
+            if rest == "":
+                return self.plain(302, extra={"Location": "/" + view.token + "/"})
+            if rest == "/":
+                return self.plain(200, VIEWER_HTML.replace("__LABEL__", view.label).encode(), "text/html; charset=utf-8")
+            if rest == "/frame":
+                try:
+                    since = int((query.get("since") or ["0"])[0])
+                except ValueError:
+                    since = 0
+                with view.cond:
+                    if view.seq <= since and not view.closed:
+                        view.cond.wait(timeout=8)
+                    if view.closed:
+                        return self.plain(410, b"closed")
+                    if view.seq <= since or not view.frame:
+                        return self.plain(204)
+                    data, seq, info = view.frame, view.seq, dict(view.info)
+                return self.plain(200, data, "image/jpeg", {"X-Seq": str(seq), "X-Info": urllib.parse.quote(json.dumps(info)[:1800])})
+            return self.plain(404, b"not found")
+
+        def do_POST(self):
+            rest, _ = self.rest()
+            if rest != "/input":
+                return self.plain(404, b"not found")
+            try:
+                size = min(int(self.headers.get("Content-Length") or 0), 200000)
+                body = json.loads(self.rfile.read(size).decode() or "{}")
+                for event in (body.get("events") or [])[:200]:
+                    if isinstance(event, dict):
+                        view.events.put(event)
+                view.last_input = time.time()
+            except Exception:
+                return self.plain(400, b"bad request")
+            return self.plain(204)
+
+    return Handler
+
+
+def ensure_tunnel_tool():
+    """The small program that gives the live view an encrypted public address. Downloaded once."""
+    import shutil
+
+    path = os.path.join(LIB, "cloudflared")
+    if os.path.exists(path) and os.path.getsize(path) > 5000000:
+        return path
+    os.makedirs(LIB, exist_ok=True)
+    log("downloading the secure tunnel tool (one time)")
+    request = urllib.request.Request("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", headers={"User-Agent": AGENT})
+    with urllib.request.urlopen(request, timeout=240) as response, open(path + ".part", "wb") as out:
+        shutil.copyfileobj(response, out)
+    os.replace(path + ".part", path)
+    os.chmod(path, 0o755)
+    return path
+
+
+def open_tunnel(port):
+    """Returns (process, https address). The address is random and only reaches this one live view."""
+    import re
+
+    with install_guard:
+        tool = ensure_tunnel_tool()
+    process = subprocess.Popen([tool, "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:" + str(port)],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    found, tail = [""], []
+
+    def read():
+        for line in process.stdout:
+            tail.append(line.strip()[:200])
+            del tail[:-6]
+            match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+            if match and not found[0] and "//api." not in match.group(0):
+                found[0] = match.group(0)
+
+    threading.Thread(target=read, daemon=True).start()
+    for _ in range(90):
+        if found[0]:
+            time.sleep(4)  # the address needs a few seconds before it answers
+            return process, found[0]
+        if process.poll() is not None:
+            break
+        time.sleep(0.5)
+    try:
+        process.terminate()
+    except Exception:
+        pass
+    raise Stop("The secure tunnel for the live view did not start. " + " | ".join(tail)[:400])
+
+
+LIVE_KEYS = {" ": "Space", "Esc": "Escape", "Del": "Delete", "Left": "ArrowLeft", "Right": "ArrowRight", "Up": "ArrowUp", "Down": "ArrowDown", "OS": "Meta"}
+LIVE_IGNORED_KEYS = ("Unidentified", "Dead", "Process", "AltGraph", "CapsLock", "NumLock", "ScrollLock", "ContextMenu")
+
+
+def live_session(page, secrets, label, view, announce):
+    """Runs on the thread that owns the browser: plays the waiting clicks and keys, then takes a new picture, over and over."""
+    context = page.context
+    current, known = page, len(context.pages)
+    size, sized_at, last_shot, started = (1280, 720), 0.0, b"", time.time()
+    held = set()
+
+    def play(event):
+        nonlocal current
+        kind = event.get("t")
+        x, y = float(event.get("x") or 0) * size[0], float(event.get("y") or 0) * size[1]
+        if kind == "move":
+            current.mouse.move(x, y)
+        elif kind == "down":
+            current.mouse.move(x, y)
+            current.mouse.down(button=event.get("b") if event.get("b") in ("left", "middle", "right") else "left")
+        elif kind == "up":
+            current.mouse.up(button=event.get("b") if event.get("b") in ("left", "middle", "right") else "left")
+        elif kind == "wheel":
+            current.mouse.move(x, y)
+            current.mouse.wheel(max(-1500, min(1500, float(event.get("dx") or 0))), max(-1500, min(1500, float(event.get("dy") or 0))))
+        elif kind == "key":
+            key = str(event.get("k") or "")
+            key = LIVE_KEYS.get(key, key)
+            if not key or key in LIVE_IGNORED_KEYS:
+                return
+            if event.get("a") == "down":
+                try:
+                    current.keyboard.down(key)
+                    held.add(key)
+                except Exception:
+                    if len(key) == 1:
+                        current.keyboard.insert_text(key)
+            elif key in held:
+                held.discard(key)
+                current.keyboard.up(key)
+        elif kind == "text":
+            text = str(event.get("v") or "")[:4000]
+            if event.get("paste"):
+                current.keyboard.insert_text(text)
+            else:
+                current.keyboard.type(text, delay=random.randint(45, 90))
+        elif kind == "secret":
+            name = event.get("v")
+            if name == "email":
+                current.keyboard.type(secrets.get("login_email") or "", delay=random.randint(60, 110))
+            elif name == "password":
+                current.keyboard.type(secrets.get("password") or "", delay=random.randint(60, 110))
+            elif name == "code":
+                if not secrets.get("totp_enabled"):
+                    view.info["note"] = "No 2-step key is saved for this account."
+                    return
+                code = call("/api/worker/v1/totp", {"account": label})
+                current.keyboard.type(str(code.get("code") or ""), delay=random.randint(60, 110))
+        elif kind == "nav":
+            target = str(event.get("v") or "")
+            if target.lower().startswith(("http://", "https://")):
+                current.goto(target, wait_until="commit", timeout=60000)
+        elif kind == "back":
+            current.go_back(wait_until="commit", timeout=30000)
+        elif kind == "reload":
+            current.reload(wait_until="commit", timeout=60000)
+        elif kind == "tab":
+            pages = [p for p in context.pages if not p.is_closed()]
+            index = int(event.get("i") or 0)
+            if 0 <= index < len(pages):
+                current = pages[index]
+                current.bring_to_front()
+        elif kind == "close":
+            view.close()
+
+    announce()
+    info_at = 0.0
+    while not view.closed:
+        now = time.time()
+        batch = []
+        if now - view.last_input > LIVE_IDLE_MINUTES * 60 or now - started > LIVE_MAX_MINUTES * 60:
+            break
+        try:
+            pages = [p for p in context.pages if not p.is_closed()]
+            if not pages:
+                pages = [context.new_page()]
+            if len(pages) > known or current.is_closed() or current not in pages:
+                current = pages[-1]  # a link opened a new tab, or the tab in view was closed
+                info_at = 0.0
+            known = len(pages)
+            # Clicks and keys first, in the order they were made. A run of mouse moves only needs its last one.
+            while len(batch) < 80:
+                try:
+                    batch.append(view.events.get_nowait())
+                except Exception:
+                    break
+            for index, event in enumerate(batch):
+                if event.get("t") == "move" and index + 1 < len(batch) and batch[index + 1].get("t") == "move":
+                    continue
+                try:
+                    play(event)
+                except Stop:
+                    raise
+                except Exception as failure:
+                    view.info["note"] = "That did not go through: " + str(failure).split("\n")[0][:120]
+            if now - sized_at > 2:
+                sized_at = now
+                try:
+                    width, height = current.evaluate("[window.innerWidth, window.innerHeight]")
+                    if width and height:
+                        size = (width, height)
+                except Exception:
+                    pass
+            if now - info_at > 1:
+                info_at = now
+                before = json.dumps(view.info, sort_keys=True)
+                try:
+                    view.info.update({"url": current.url[:300], "title": current.title()[:80], "tab": pages.index(current),
+                                      "tabs": [(p.url.split("//")[-1][:40] or "new tab") for p in pages]})
+                except Exception:
+                    pass
+                if json.dumps(view.info, sort_keys=True) != before:
+                    last_shot = b""  # the address or the tabs changed: send the picture again so the viewer shows them
+            shot = current.screenshot(type="jpeg", quality=60, timeout=8000)
+            if shot != last_shot:
+                last_shot = shot
+                view.set_frame(shot)
+        except Stop:
+            raise
+        except Exception:
+            time.sleep(0.3)
+        time.sleep(0.04 if batch else 0.12)
+    for key in list(held):
+        try:
+            current.keyboard.up(key)
+        except Exception:
+            pass
+    return int((time.time() - started) / 60)
+
+
+def live_browser_job(label):
+    """Opens one account's browser for the operator to use by hand, and keeps it open until they are done."""
+    import http.server
+
+    outcome = ""
+    tunnel, server = None, None
+
+    def tell(**fields):
+        try:
+            return call("/api/worker/v1/accounts/browser", dict(fields, account=label))
+        except Exception as failure:
+            log("could not report on the live browser for " + label + ": " + str(failure)[:160])
+            return {}
+
+    try:
+        current_job["text"] = "live browser " + label
+        tell(state="opening", note="opening the browser")
+
+        def work(page, secrets, stage):
+            nonlocal tunnel, server
+            stage[0] = "opening the live view"
+            view = LiveView(os.urandom(18).hex(), label)
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), live_handler(view))
+            server.daemon_threads = True
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            tell(state="opening", note="starting the secure connection")
+            tunnel, address = open_tunnel(server.server_address[1])
+
+            def watch_for_close():
+                # The operator can also close it from DiceDrop. Asked every 10 seconds, which also says "still open".
+                while not view.closed:
+                    if tell(state="open").get("close"):
+                        view.close()
+                        return
+                    time.sleep(10)
+
+            def announce():
+                tell(state="open", url=address + "/" + view.token + "/", note="open")
+                log("live browser for " + label + " is open")
+                threading.Thread(target=watch_for_close, daemon=True).start()
+
+            stage[0] = "showing the browser"
+            try:
+                page.goto("https://www.amazon.com/", wait_until="commit", timeout=60000)
+            except Exception:
+                pass
+            try:
+                minutes = live_session(page, secrets, label, view, announce)
+            finally:
+                view.close()
+            return "used by hand for " + str(minutes) + " minute" + ("" if minutes == 1 else "s")
+
+        result, problem, _, _ = run_in_account_browser(
+            label, lambda text: tell(state="opening", note=text), work, reason="manual browser",
+            summary=lambda r, e: (False, e) if e else (True, str(r or "used by hand")))
+        outcome = problem or str(result or "closed")
+        log("live browser for " + label + " closed" + (": " + problem if problem else ""))
+    except Exception as failure:
+        outcome = "The live browser could not open: " + str(failure)[:200]
+    finally:
+        for closer in (lambda: server and server.shutdown(), lambda: tunnel and tunnel.terminate()):
+            try:
+                closer()
+            except Exception:
+                pass
+        tell(state="closed", note=outcome)
+        ship_log("job", "live browser " + label)
+        current_job["text"] = ""
+        job_lock.release()
+
+
 def read_totals(page):
     import re
 
@@ -2796,6 +3226,12 @@ def main():
                     if account.get("signin_requested") and label not in busy_accounts and job_lock.acquire(blocking=False):
                         log("sign-in requested for " + label)
                         start_job(sign_in_job, label, label)
+                # An account's browser opened by hand from DiceDrop.
+                for job in reply.get("browser_jobs", []):
+                    label = job.get("account_label") or ""
+                    if label and label not in busy_accounts and job_lock.acquire(blocking=False):
+                        log("live browser requested for " + label)
+                        start_job(live_browser_job, label, label)
                 for job in reply.get("order_jobs", []):
                     label = job.get("account_label") or ""
                     if job.get("run_kind") not in ("cart_only", "place_order") or not label:
