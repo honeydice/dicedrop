@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.18.0"
+VERSION = "0.19.6"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -539,7 +539,20 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
         with sync_playwright() as playwright:
             stage[0] = "connecting to the Kameleo browser"
             endpoint = "ws://" + KAMELEO.split("://", 1)[1] + "/playwright/" + profile_id
-            browser = playwright.chromium.connect_over_cdp(endpoint_url=endpoint, timeout=600000)
+            # A proxy can refuse one connection (most often when the same account is opened again seconds
+            # after its last session closed). Wait and try again before calling it a problem.
+            browser = None
+            for attempt in range(4):
+                try:
+                    browser = playwright.chromium.connect_over_cdp(endpoint_url=endpoint, timeout=600000)
+                    break
+                except Exception as failure:
+                    if "proxy_connection_issue" not in str(failure) or attempt == 3:
+                        if "proxy_connection_issue" in str(failure):
+                            raise Stop("The proxy for " + label + " did not connect after 4 tries. The account itself is fine; it is tried again on the next check.")
+                        raise
+                    log("proxy for " + label + " did not connect (try " + str(attempt + 1) + " of 4); waiting 20 seconds")
+                    time.sleep(20)
             stage[0] = "opening a page"
             context = browser.contexts[0]
             page = context.pages[0] if context.pages else context.new_page()
