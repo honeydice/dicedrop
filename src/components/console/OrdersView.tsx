@@ -268,7 +268,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 <button type="submit" disabled={busy === 'new'} className={btnAccent}>
                   Add to queue
                 </button>
-                <span className="font-mono text-xs text-muted">added as held · nothing runs until you click order now</span>
+                <span className="font-mono text-xs text-muted">added as held · orders are placed when a client sends them with auto-order</span>
               </div>
             </form>
           </Card>
@@ -440,27 +440,6 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                     ))}
                   </dl>
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={busy === o.id || !['held', 'pending', 'issue'].includes(o.status) || Boolean(o.amazon_order_id)}
-                      onClick={() => void rpc(o.id, 'dd_ops_order_now', { p_order: o.id })}
-                      className={btnAccent}
-                      title="Cart only: adds the item and the buyer's address, opens checkout, takes a screenshot. Does not buy."
-                    >
-                      {o.status === 'ordering' && o.run_kind === 'cart_only' ? 'Running' : 'Order now (cart only)'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy === o.id || !['held', 'pending', 'issue'].includes(o.status) || Boolean(o.amazon_order_id)}
-                      onClick={() => {
-                        const total = o.checkout?.total != null ? ` Last checkout total: ${money(o.checkout.total)}.` : '';
-                        if (!window.confirm(`Place this order for real? Amazon will charge the card on the account and ship ${o.title ?? o.asin ?? 'the item'} to ${o.ship_name ?? 'the buyer'}.${total}`)) return;
-                        void rpc(o.id, 'dd_ops_order_now', { p_order: o.id, p_kind: 'place_order' });
-                      }}
-                      className="min-h-[44px] rounded-lg border border-dangerline bg-dangerbg px-4 text-[13px] font-semibold text-bad disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {o.status === 'ordering' && o.run_kind === 'place_order' ? 'Placing' : 'Place order (real)'}
-                    </button>
                     {o.snapshot_at ? (
                       <button
                         type="button"
