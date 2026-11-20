@@ -169,6 +169,9 @@ export interface OpsAccount {
   auto_tracking: boolean;
   order_scan: boolean;
   /** Warm-up: until this time the account only browses and gets no orders. */
+  /** Amazon has the account on hold (its own words), until it is verified. No orders are sent to it. */
+  hold_reason?: string | null;
+  hold_at?: string | null;
   warmup_until?: string | null;
   warmup_days?: number | null;
   warmup_last_at?: string | null;

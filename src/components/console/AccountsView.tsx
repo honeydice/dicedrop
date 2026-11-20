@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -12,7 +12,7 @@ import { AccountModal } from './AccountModal';
 type Filter = 'all' | 'ready' | 'attention' | 'paused' | 'unassigned';
 
 function needsAttention(a: OpsAccount): boolean {
-  return a.status === 'locked' || a.session_state === 'needs_sign_in' || a.session_state === 'verification' || a.session_state === 'locked';
+  return Boolean(a.hold_reason) || a.status === 'locked' || a.session_state === 'needs_sign_in' || a.session_state === 'verification' || a.session_state === 'locked';
 }
 
 function isReady(a: OpsAccount): boolean {
@@ -21,6 +21,7 @@ function isReady(a: OpsAccount): boolean {
 
 /** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
 function signIn(a: OpsAccount): { text: string; color: string } {
+  if (a.hold_reason) return { text: 'on hold · verify account', color: TONE.bad };
   if (a.signin_requested_at) return { text: a.signin_note ?? 'signing in', color: 'rgb(var(--accent))' };
   if (a.status === 'paused') return { text: 'paused', color: TONE.muted };
   if (a.status === 'locked' || a.session_state === 'locked') return { text: 'locked', color: TONE.bad };
@@ -538,6 +539,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         {pw?.id === a.id ? 'Hide password' : 'Show password'}
                       </button>
                     ) : null}
+                    {a.hold_reason ? (
+                      <button type="button" disabled={busy} className={btn} style={{ borderColor: TONE.bad, color: TONE.bad }} onClick={() => void run(() => clearHold(a.id))}>
+                        Account verified · clear hold
+                      </button>
+                    ) : null}
                     <select
                       aria-label="Warm-up"
                       disabled={busy}
@@ -559,6 +565,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     {a.box_online !== true ? <span className="font-mono text-xs text-muted">sign-in needs this account&apos;s vps online</span> : null}
                   </div>
 
+                  {a.hold_reason ? (
+                    <div className="mt-3 rounded-md border px-3 py-2 text-[13px]" style={{ borderColor: TONE.bad, color: TONE.bad }}>
+                      Amazon: {a.hold_reason}
+                    </div>
+                  ) : null}
                   {pw?.id === a.id ? (
                     <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-divider bg-raised px-3 py-2">
                       <span className="font-mono text-xs text-muted">{a.login_email}</span>

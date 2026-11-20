@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.23.0"
+VERSION = "0.23.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1974,11 +1974,27 @@ def open_order(page, number, tries=2, wait=6.0):
             page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
             settle(page)
             card = order_card(page, number)
+            try:
+                listing = page_words(page, 5000)
+                if "your orders" in listing.lower() and "/ap/signin" not in page.url:
+                    current_job["account_on_hold"] = account_hold(listing)
+                    if current_job["account_on_hold"]:
+                        current_job["hold_words"] = hold_sentence(listing)
+            except Exception:
+                pass
             if card is not None:
                 try:
                     card_words = " ".join(card.inner_text(timeout=5000).split())
                 except Exception:
                     card_words = ""
+                if account_hold(card_words) or (current_job.get("account_on_hold") and state_from_words(card_words, short=True) == "ordered" and "track package" not in card_words.lower()):
+                    # "Order on hold - Verify your account": show exactly that, banner and order together.
+                    current_job["order_on_hold"] = number
+                    try:
+                        page.evaluate("window.scrollTo(0, 0)")
+                    except Exception:
+                        pass
+                    return "hold", card_words
                 if state_from_words(card_words, short=True) != "cancelled" and click_text_in(card, ["Track package", "Track Package"]):
                     settle(page)
                     if order_page_ok(page, number, tracking=True):
@@ -2105,6 +2121,25 @@ def order_gone(page, number, listed_only=False):
     except Exception as failure:
         log("looking for a missing order " + number + ": " + str(failure)[:160])
         return "", ""
+
+
+def account_hold(words):
+    """Amazon has put the whole account on hold ("Verify your account - We've detected unusual account activity.
+    Existing orders are on hold and new orders will be cancelled") or this order ("Order on hold")."""
+    low = " ".join((words or "").lower().split())
+    return ("order on hold" in low or "orders are on hold" in low or "unusual account activity" in low
+            or ("verify your account" in low and "on hold" in low))
+
+
+def hold_sentence(words):
+    """Amazon's own words for the hold, for the error shown to the operator."""
+    import re
+
+    flat = " ".join((words or "").split())
+    found = re.search(r"(We've detected unusual account activity[^.]*\.[^.]*\.)", flat)
+    if found:
+        return found.group(1)[:220]
+    return "Amazon put this order on hold until the account is verified"
 
 
 def needs_verify(words):
@@ -2263,8 +2298,15 @@ def check_order(page, order):
     takes an order out of the account while its own page still opens and says "Ordered". Such an order is reported
     as missing (or cancelled, when it is under Cancelled Orders) instead of ordered."""
     current_job["unlisted"] = ""
+    current_job["account_on_hold"] = None
+    current_job["order_on_hold"] = ""
+    current_job["hold_words"] = ""
     result = check_order_look(page, order)
     number = order["amazon_order_id"]
+    if current_job.get("account_on_hold") is not None:
+        result["account_on_hold"] = bool(current_job["account_on_hold"])
+        if current_job["account_on_hold"]:
+            result["account_hold_words"] = current_job.get("hold_words") or ""
     if current_job.get("unlisted") == number and result.get("state") == "ordered" and not result.get("missing") and not order.get("_tries"):
         try:
             gone, shot = order_gone(page, number, listed_only=True)
@@ -2328,6 +2370,16 @@ def check_order_look(page, order):
             result.update({"missing": True, "screenshot": shot})
             return result
         log("order " + number + " could not be opened on Amazon this time; it is checked again next round")
+        return result
+
+    if kind == "hold":
+        # Amazon wants the account itself verified. Only the account's owner can do that: report it, with the picture.
+        log("order " + number + ": Amazon has the order on hold until the account is verified")
+        result.update({"state": "verify", "note": "Verify Account", "attempted": False,
+                       "verify_detail": current_job.get("hold_words") or hold_sentence(card_words),
+                       "screenshot": picture(page, card_only=False)})
+        if order.get("_label"):
+            report(order["_label"], session_state="verification", error="Amazon asks to verify the account (unusual account activity). Its orders are on hold.")
         return result
 
     # Amazon holding the order for card verification: try to answer it (twice at most), otherwise report it.

@@ -342,6 +342,18 @@ export interface AccessLine {
   box: string | null;
 }
 
+/** Clears "on hold" on an account after it has been verified on Amazon, so it can take orders again. */
+export async function clearHold(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_clear_hold', { p_account: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Turns warm-up on for an account for a number of days (0 turns it off). While warming up it only browses. */
 export async function setWarmup(id: string, days: number): Promise<Result> {
   try {
