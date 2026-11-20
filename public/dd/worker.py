@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.27.0"
+VERSION = "0.28.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -268,8 +268,101 @@ SITE_MARK = "amazon.com"
 REQUIRE_GREETING = True
 
 
+# ---------------------------------------------------------------- moving at a person's pace
+# The worker used to work like a machine: the pointer jumped straight to the middle of each button, every key landed
+# on the same beat, pages were never scrolled, and a whole order took about two minutes. These helpers make it work the
+# way a person at the keyboard does: the pointer travels to a button along a curve and lands somewhere inside it, typing
+# speeds up and slows down, pages get read (scrolled) before anything is pressed, and an order run takes its time.
+human_state = threading.local()
+pointer_at = {}
+
+
 def pause(low=0.8, high=2.0):
-    time.sleep(random.uniform(low, high))
+    time.sleep(random.uniform(low, high) * float(getattr(human_state, "pace", 1.0)))
+
+
+def human_move(page, x, y):
+    """Moves the pointer to (x, y) the way a hand does: along a slight curve, faster in the middle, in many small steps."""
+    start = pointer_at.get(id(page)) or (random.uniform(200, 900), random.uniform(120, 500))
+    distance = ((x - start[0]) ** 2 + (y - start[1]) ** 2) ** 0.5
+    steps = max(8, min(40, int(distance / random.uniform(18, 32))))
+    bend = random.uniform(-0.18, 0.18) * distance
+    middle = ((start[0] + x) / 2 - (y - start[1]) / max(distance, 1) * bend, (start[1] + y) / 2 + (x - start[0]) / max(distance, 1) * bend)
+    for index in range(1, steps + 1):
+        t = index / steps
+        t = t * t * (3 - 2 * t)  # ease in and out
+        px = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * middle[0] + t ** 2 * x
+        py = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * middle[1] + t ** 2 * y
+        page.mouse.move(px + random.uniform(-0.6, 0.6), py + random.uniform(-0.6, 0.6))
+        time.sleep(random.uniform(0.004, 0.016))
+    pointer_at[id(page)] = (x, y)
+    if len(pointer_at) > 200:
+        pointer_at.clear()
+
+
+def humanize():
+    """Once per worker: every click and every typed word, anywhere in the worker, goes through the person-like versions."""
+    from playwright.sync_api import Locator
+
+    if getattr(Locator, "_dd_human", False):
+        return
+    plain_click, plain_type = Locator.click, Locator.press_sequentially
+
+    def click(self, **options):
+        try:
+            if getattr(human_state, "on", False) and not options.get("force") and "position" not in options:
+                self.scroll_into_view_if_needed(timeout=min(int(options.get("timeout") or 5000), 5000))
+                box = self.bounding_box(timeout=3000)
+                if box and box["width"] > 8 and box["height"] > 8:
+                    inside_x, inside_y = box["width"] * random.uniform(0.25, 0.75), box["height"] * random.uniform(0.3, 0.7)
+                    human_move(self.page, box["x"] + inside_x, box["y"] + inside_y)
+                    time.sleep(random.uniform(0.08, 0.35))
+                    options["position"] = {"x": inside_x, "y": inside_y}
+                    options.setdefault("delay", random.randint(45, 130))
+        except Exception:
+            options.pop("position", None)
+        if "position" in options and not options.get("trial"):
+            # If the chosen spot is covered by something, fall back to the plain click in the middle rather than fail.
+            try:
+                return plain_click(self, **dict(options, timeout=min(int(options.get("timeout") or 8000), 8000)))
+            except Exception:
+                options.pop("position", None)
+        return plain_click(self, **options)
+
+    def press_sequentially(self, text, **options):
+        if not getattr(human_state, "on", False) or len(text) < 3:
+            return plain_type(self, text, **options)
+        base = int(options.get("delay") or 90)
+        position = 0
+        while position < len(text):
+            size = random.randint(1, 5)
+            chunk, position = text[position:position + size], position + size
+            plain_type(self, chunk, **dict(options, delay=max(25, int(base * random.uniform(0.55, 1.6)))))
+            if position < len(text) and random.random() < 0.22:
+                time.sleep(random.uniform(0.25, 0.9))  # a glance away, the way people type
+
+    Locator.click, Locator.press_sequentially, Locator._dd_human = click, press_sequentially, True
+
+
+def look_around(page, low=2, high=5):
+    """Reads the page the way a shopper does before pressing anything: scrolls down in a few goes, pauses, comes back up."""
+    if not getattr(human_state, "on", False):
+        return
+    try:
+        human_move(page, random.uniform(300, 900), random.uniform(250, 550))
+        travelled = 0
+        for _ in range(random.randint(low, high)):
+            step = random.randint(280, 760)
+            page.mouse.wheel(0, step)
+            travelled += step
+            time.sleep(random.uniform(0.7, 2.6))
+        if random.random() < 0.5:
+            page.mouse.wheel(0, -random.randint(150, 400))
+            time.sleep(random.uniform(0.5, 1.5))
+        page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
+        time.sleep(random.uniform(0.8, 1.8))
+    except Exception:
+        pass
 
 
 def first_visible(page, selector):
@@ -888,6 +981,9 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
             profile_id = ensure_profile(label, secrets)
         note("opening the browser")
 
+        humanize()
+        human_state.on = True
+        human_state.pace = random.uniform(1.5, 2.1) if reason.startswith(("place order", "cart-only")) else 1.0
         stage[0] = "starting the remote control"
         with sync_playwright() as playwright:
             stage[0] = "connecting to the " + ("Multilogin" if engine == "multilogin" else "Kameleo") + " browser"
@@ -1108,6 +1204,7 @@ def add_to_cart(page, order):
     settle(page)
     if visible(page, CAPTCHA):
         raise Stop("Amazon is showing a picture puzzle on the product page.")
+    look_around(page)  # read the product page before adding it
     if not visible(page, "#add-to-cart-button"):
         availability = ""
         try:
@@ -1870,6 +1967,7 @@ def place_order(page, label=""):
     except Exception:
         history = None
 
+    look_around(page, 1, 3)  # look the order over before buying, like anyone would
     button = first_visible(page, "#placeOrder, input[name='placeYourOrder1']")
     if button is None:
         raise Stop("Could not find Amazon's Place your order button. Nothing was ordered." + describe(page))
