@@ -1,0 +1,2 @@
+# v0.20.2
+- Worker 0.20.2: every look at an unshipped order opens the order's own page first, where Amazon shows the Verify payment button; when it is there the worker runs the verify steps (pick the card, re-enter its number, Verify card). Before this it looked at the tracking view, which never shows that notice, so the steps never started. Right after a checkout that asked for verification it looks up to four times over a minute.

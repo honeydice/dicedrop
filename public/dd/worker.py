@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.20.1"
+VERSION = "0.20.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1826,13 +1826,35 @@ def check_order(page, order):
     result = {"state": order.get("status") if order.get("status") in ("ordered", "shipped") else "ordered",
               "delivery_estimate": "", "tracking_number": "", "carrier": "", "note": "", "screenshot": ""}
 
-    kind, card_words = open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0))
+    # First, the order's own page: that is where Amazon puts "Your bank requires verification" and the
+    # Verify payment button. (The tracking view, which is looked at next, does not show it.) Only for orders
+    # that have not shipped. Right after an order whose checkout asked for verification, look a few times:
+    # the notice can take a minute to appear.
+    seen_hold = False
+    if order.get("status") != "shipped":
+        for look in range(4 if order.get("_verify_expected") else 1):
+            try:
+                page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+                if order_page_ok(page, number) and needs_verify(page_words(page, 6000)):
+                    seen_hold = True
+                    break
+            except Stop:
+                raise
+            except Exception:
+                pass
+            if order.get("_verify_expected") and look < 3:
+                time.sleep(15)
+    if seen_hold:
+        log("order " + number + ": Amazon is asking to verify the payment")
+
+    kind, card_words = ("details", "") if seen_hold else open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0))
     if not kind:
         log("order " + number + " could not be opened on Amazon this time; it is checked again next round")
         return result
 
     # Amazon holding the order for card verification: try to answer it (twice at most), otherwise report it.
-    asked = needs_verify(card_words) or (kind != "list" and needs_verify(page_words(page, 6000)))
+    asked = seen_hold or needs_verify(card_words) or (kind != "list" and needs_verify(page_words(page, 6000)))
     if asked:
         attempts = int(order.get("verify_attempts") or 0)
         label = order.get("_label") or ""
@@ -2053,7 +2075,8 @@ def cart_only_job(job):
                 seen = {"state": "ordered", "delivery_estimate": "", "note": "", "tracking_number": "", "carrier": "", "screenshot": ""}
                 if order_id:
                     try:
-                        seen = check_order(page, {"amazon_order_id": order_id, "status": "ordered", "_label": label, "_tries": 10, "_wait": 12.0, "verify_attempts": 0})
+                        seen = check_order(page, {"amazon_order_id": order_id, "status": "ordered", "_label": label, "_tries": 10, "_wait": 12.0, "verify_attempts": 0,
+                                                 "_verify_expected": bool(current_job.get("verify_note"))})
                     except Stop:
                         raise
                     except Exception as failure:
