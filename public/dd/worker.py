@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.28.2"
+VERSION = "0.28.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -214,6 +214,7 @@ def address_owner(ip):
 
 
 checked_addresses = {}
+told_waiting = {}
 
 
 def direct_ip():
@@ -3685,6 +3686,14 @@ def main():
                     if account.get("signin_requested") and label not in busy_accounts and job_lock.acquire(blocking=False):
                         log("sign-in requested for " + label)
                         start_job(sign_in_job, label, label)
+                    elif account.get("signin_requested") and time.time() - told_waiting.get(label, 0) > 45:
+                        # The sign-in has to wait: say why on the account instead of leaving "waiting for the box".
+                        told_waiting[label] = time.time()
+                        why = ("this account is busy (" + (running_text() or "another job") + ")") if label in busy_accounts else "the VPS is working at its limit; this is next"
+                        try:
+                            report(label, note="waiting · " + why[:140])
+                        except Exception:
+                            pass
                 # Who each account's proxy address belongs to: looked up once per address, from the box itself.
                 for check in reply.get("ip_checks", [])[:6]:
                     label, ip = check.get("account_label") or "", check.get("ip") or ""
