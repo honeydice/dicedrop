@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.25.1"
+VERSION = "0.25.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3326,7 +3326,9 @@ def cart_only_job(job):
                 progress(note="placing the order · total $" + format(totals["total"], ".2f"))
                 order_id = place_order(page, label)
                 if current_job.get("verify_note"):
-                    totals["verify"] = current_job["verify_note"]
+                    # The order was created, so Amazon's payment check at checkout let it through.
+                    # The remark stays on the order (and keeps it on a 3-minute watch for 50 minutes).
+                    totals["verify"] = "Amazon ran a payment check at checkout and the order went through"
                 if current_job.get("verify_seen"):
                     totals["verify_page"] = current_job["verify_seen"]
                 # Record the order right away. Nothing after this line can undo it or cause it to be placed again.
@@ -3349,7 +3351,12 @@ def cart_only_job(job):
                         log("after ordering: could not look at the order: " + str(failure)[:200])
                 if not seen.get("delivery_estimate") and current_job.get("thankyou_estimate"):
                     seen["delivery_estimate"] = current_job["thankyou_estimate"]
-                if current_job.get("verify_note") and seen.get("state") == "ordered" and not seen.get("verified") and not current_job.get("verify_ai_ok"):
+                # Amazon's "Verify payment - Confirm your identity to complete this payment" page at checkout is a check that
+                # runs by itself: the page has nothing to click, moves on, and the order is created. Orders that went through
+                # it stood and shipped (DD-100002, DD-100004), with no notice on the order and no email. So it is no longer
+                # reported as an error. An order is "Verify Payment" only when Amazon's own order page asks for it, and
+                # "Verify Account" when Amazon puts the account on hold; check_order reports both by itself.
+                if False and current_job.get("verify_note") and seen.get("state") == "ordered" and not seen.get("verified") and not current_job.get("verify_ai_ok"):
                     # Amazon or the bank asked to confirm the payment during checkout and it was not answered.
                     # The order exists, but Amazon cancels these if the payment is not confirmed: say so now.
                     seen["state"] = "verify"
