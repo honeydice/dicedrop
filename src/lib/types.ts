@@ -170,6 +170,8 @@ export interface OpsAccount {
   order_scan: boolean;
   /** Warm-up: until this time the account only browses and gets no orders. */
   /** Amazon has the account on hold (its own words), until it is verified. No orders are sent to it. */
+  /** Its Multilogin browser was open on another computer a moment ago, so the worker is leaving it alone. */
+  in_use_elsewhere?: boolean;
   /** False: the account is still checked for shipping, but no new order is sent to it. */
   ordering_enabled?: boolean;
   /** Which browser the account runs in: kameleo (default) or multilogin, with the name of its Multilogin profile. */

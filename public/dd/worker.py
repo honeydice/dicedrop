@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.26.0"
+VERSION = "0.26.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -767,14 +767,25 @@ def mlx_start(label, secrets):
             break
         except RuntimeError as failure:
             text = str(failure)
+            log("Multilogin start for " + label + " (try " + str(attempt + 1) + " of 3): " + text[:300])
+            busy = any(word in text.lower() for word in ("already", "running", "locked", "lock", "in use", "another device", "opened"))
             if attempt == 2:
+                if busy:
+                    # The profile is open somewhere else (most likely by hand on the operator's computer). Nothing is wrong:
+                    # the worker leaves it alone and comes back later.
+                    current_job["in_use"] = True
+                    try:
+                        report(label, in_use=True, error="Its Multilogin browser is open on another computer. The worker waits until it is closed there.")
+                    except Exception:
+                        pass
+                    raise Stop("The Multilogin browser for " + label + " is open on another computer, so the worker left it alone.")
                 raise Stop("Multilogin could not start the profile for " + label + ". " + text[:300])
-            if "already" in text.lower() or "running" in text.lower() or "locked" in text.lower():
-                log("Multilogin says the profile for " + label + " is already open; closing it and trying again")
-                mlx_stop(profile)
+            if busy and attempt == 0:
+                mlx_stop(profile)  # clears a copy left open on this box; it cannot close one on another computer
             time.sleep(6)
         except ConnectionError as failure:
             raise Stop("The Multilogin agent on this box is not answering. " + str(failure)[:200])
+    current_job["in_use"] = False
     port = (reply.get("data") or {}).get("port")
     if not port:
         raise Stop("Multilogin started the profile but gave no connection port: " + json.dumps(reply)[:260])
@@ -3388,6 +3399,9 @@ def cart_only_job(job):
         totals = totals or {}
         if current_job.get("recorded_done"):
             pass  # the order was already recorded as placed; a later hiccup must not change that
+        elif error and current_job.get("in_use") and not current_job.get("place_clicked"):
+            # The account's browser is open on another computer: nothing was touched, so the order goes back in line.
+            progress(done=True, release=True, note="waiting · " + label + "'s browser is open on another computer")
         elif error:
             progress(done=True, error=error, note="stopped", screenshot=shot, place_uncertain=bool(current_job.get("place_clicked")))
         else:
@@ -3402,6 +3416,7 @@ def cart_only_job(job):
         current_job["shot"] = ""
         current_job["verify_note"] = ""
         current_job["verify_ai_ok"] = False
+        current_job["in_use"] = False
         current_job["verify_reason"] = ""
         current_job["ai_read"] = ""
         current_job["verify_shot"] = ""

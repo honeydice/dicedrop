@@ -21,6 +21,7 @@ function isReady(a: OpsAccount): boolean {
 
 /** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
 function signIn(a: OpsAccount): { text: string; color: string } {
+  if (a.in_use_elsewhere) return { text: 'open on another computer · worker waiting', color: TONE.warn };
   if (a.browser_state) return { text: a.browser_state === 'open' ? 'browser open · in use by hand' : 'opening browser', color: 'rgb(var(--accent))' };
   if (a.hold_reason) return { text: 'on hold · verify account', color: TONE.bad };
   if (a.signin_requested_at) return { text: a.signin_note ?? 'signing in', color: 'rgb(var(--accent))' };
