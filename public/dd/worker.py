@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.28.3"
+VERSION = "0.28.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3689,7 +3689,7 @@ def main():
                     elif account.get("signin_requested") and time.time() - told_waiting.get(label, 0) > 45:
                         # The sign-in has to wait: say why on the account instead of leaving "waiting for the box".
                         told_waiting[label] = time.time()
-                        why = ("this account is busy (" + (running_text() or "another job") + ")") if label in busy_accounts else "the VPS is working at its limit; this is next"
+                        why = ("this account is busy (" + (" | ".join(running_text.values()) or "another job") + ")") if label in busy_accounts else "the VPS is working at its limit; this is next"
                         try:
                             report(label, note="waiting · " + why[:140])
                         except Exception:
