@@ -119,9 +119,10 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
       setError('Still loading the proxy list. Try again in a moment.');
       return;
     }
-    if (!form.label.trim() || !form.login_email.trim()) {
+    // The email can wait: an account can start as just its computer (VPS + proxy), with the Amazon account made by hand in Open browser.
+    if (!form.label.trim()) {
       setTab('details');
-      setError('Add a label and the Amazon sign-in email first.');
+      setError('Add a label first.');
       return;
     }
     setBusy(true);
@@ -214,7 +215,7 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                   <label htmlFor="am-email" className={label}>
                     Email
                   </label>
-                  <input id="am-email" type="email" autoComplete="off" placeholder="buyer01@yourdomain.com" value={form.login_email} onChange={(e) => set({ login_email: e.target.value })} className={field} />
+                  <input id="am-email" type="email" autoComplete="off" placeholder="buyer01@yourdomain.com (can be added later)" value={form.login_email} onChange={(e) => set({ login_email: e.target.value })} className={field} />
                 </div>
                 <div>
                   <label htmlFor="am-pass" className={label}>

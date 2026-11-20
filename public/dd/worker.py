@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.25.3"
+VERSION = "0.25.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -854,7 +854,8 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
     saved_stderr = capture_stderr()
     try:
         secrets = call("/api/worker/v1/accounts/secrets", {"account": label})
-        if not secrets.get("password"):
+        if not secrets.get("password") and reason != "manual browser":
+            # The browser can be opened by hand before any Amazon sign-in exists; everything else needs the password.
             raise Stop("No Amazon password is saved for this account.")
         engine = "multilogin" if secrets.get("engine") == "multilogin" else "kameleo"
         if engine == "kameleo" and (not secrets.get("proxy") or not secrets["proxy"].get("host")):
