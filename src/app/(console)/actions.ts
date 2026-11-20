@@ -367,6 +367,23 @@ export async function getAccountPassword(id: string): Promise<string | null> {
   }
 }
 
+export interface AllAccessLine extends AccessLine {
+  account: string;
+}
+
+/** Every account's sessions in one list, newest first. `reason` narrows it ("warm-up", "sign-in", "order check", "place order"). */
+export async function getAllAccountLogs(reason: string): Promise<AllAccessLine[] | null> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return null;
+    const { data, error } = await ctx.db.rpc('dd_ops_access_log_all', { p_limit: 200, p_reason: reason || null });
+    if (error) return null;
+    return (data ?? []) as AllAccessLine[];
+  } catch {
+    return null;
+  }
+}
+
 /** The last 20 times a box opened this account: when, why, and how it went. */
 export async function getAccountLog(id: string): Promise<AccessLine[] | null> {
   try {

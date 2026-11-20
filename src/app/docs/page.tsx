@@ -170,6 +170,7 @@ export default function DocsPage() {
             ['quantity', 'Optional, default 1.'],
             ['line_id', 'Optional. Set it when one order has several items; each item is its own DiceDrop order.'],
             ['gift', 'Optional. { message, from } marks the order as a gift with that note.'],
+            ['manual_order', 'Optional: { amazon_order_id, account, total }. Use it when you already bought this order by hand on one of the Amazon accounts (GET /accounts lists their labels). Nothing is bought. DiceDrop follows the order from there and sends the same pulses: ordered, proof, shipped, delivered, issue. Sending it again changes the Amazon order number or the account.'],
             ['auto_order', 'Optional, true or false. When true (and switched on for your account) the order is bought automatically after delay_seconds (default 60). Cancel inside that window with POST /orders/{id}/cancel. Sending the same order again with auto_order after an issue or a cancel puts that same order back in the queue: one order, one DiceDrop number.'],
             ['store_code, title, photo_url, buyer, sale_price, sale_fees, est_cost, ship_by, metadata', 'Optional. Stored on the order and sent back to you.'],
           ]}

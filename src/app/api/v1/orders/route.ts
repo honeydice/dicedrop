@@ -50,9 +50,13 @@ export async function POST(req: Request) {
     const state = str(shipTo.state);
     const postal = str(shipTo.postal_code);
 
+    // manual_order: { amazon_order_id, account, total } - the client already bought this order by hand on one of the
+    // Amazon accounts. Nothing is bought; DiceDrop only follows it from here (delivery date, shipping, tracking).
+    const manualBox = body.manual_order && typeof body.manual_order === 'object' && !Array.isArray(body.manual_order) ? (body.manual_order as Record<string, unknown>) : null;
+
     const missing: string[] = [];
     if (!orderNumber) missing.push('order_number');
-    if (!asin && !buyUrl) missing.push('asin (or buy_url)');
+    if (!asin && !buyUrl && !manualBox) missing.push('asin (or buy_url)');
     if (!shipName) missing.push('ship_to.name');
     if (!line1) missing.push('ship_to.line1');
     if (!city) missing.push('ship_to.city');
@@ -108,6 +112,18 @@ export async function POST(req: Request) {
       auto_order: body.auto_order === true || body.auto_order === 'true' ? 'true' : 'false',
       delay_seconds: num(body.delay_seconds),
     };
+
+    if (manualBox) {
+      const linked = await auth.db.rpc('dd_api_link_order', {
+        p_key: auth.key,
+        p_order: order,
+        p_amazon: str(manualBox.amazon_order_id) ?? '',
+        p_account: str(manualBox.account) ?? '',
+        p_total: num(manualBox.total),
+      });
+      if (linked.error) return fromDbError(linked.error);
+      return NextResponse.json({ order: publicOrder(linked.data.order), linked: true, created: Boolean(linked.data?.created) });
+    }
 
     const { data, error } = await auth.db.rpc('dd_api_create_order', { p_key: auth.key, p_order: order });
     if (error) return fromDbError(error);

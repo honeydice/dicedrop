@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getAccountLog, getAccountPassword, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -91,6 +91,12 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [copied, setCopied] = useState('');
   const [logs, setLogs] = useState<{ id: string; lines: AccessLine[] | null } | null>(null);
   const [pw, setPw] = useState<{ id: string; value: string; copied: boolean } | null>(null);
+  const [allLogs, setAllLogs] = useState<{ reason: string; lines: AllAccessLine[] | null } | null>(null);
+  const loadAllLogs = async (reason: string) => {
+    setAllLogs({ reason, lines: null });
+    const lines = await getAllAccountLogs(reason);
+    setAllLogs({ reason, lines: lines ?? [] });
+  };
   const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
     setSyncing(true);
@@ -237,6 +243,58 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           </button>
         ))}
       </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button type="button" className={btn} aria-expanded={allLogs !== null} onClick={() => (allLogs ? setAllLogs(null) : void loadAllLogs(''))}>
+          {allLogs ? 'Hide activity log' : 'Activity log'}
+        </button>
+        {allLogs
+          ? [
+              ['', 'All'],
+              ['warm-up', 'Warm-ups'],
+              ['sign-in', 'Sign-ins'],
+              ['order check', 'Order checks'],
+              ['place order', 'Orders'],
+            ].map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                className={btn}
+                style={allLogs.reason === value ? { borderColor: 'rgb(var(--accent))', color: 'rgb(var(--accent))' } : undefined}
+                onClick={() => void loadAllLogs(value)}
+              >
+                {label}
+              </button>
+            ))
+          : null}
+      </div>
+      {allLogs ? (
+        <div className="mb-4 max-h-[420px] overflow-auto rounded-md border border-divider font-mono text-xs">
+          {allLogs.lines === null ? (
+            <div className="px-3 py-2.5 text-muted">loading</div>
+          ) : allLogs.lines.length === 0 ? (
+            <div className="px-3 py-2.5 text-muted">nothing logged yet</div>
+          ) : (
+            allLogs.lines.map((l, i) => (
+              <div key={l.at + i} className="flex flex-wrap items-start gap-x-3 gap-y-0.5 border-b border-divider px-3 py-1.5 last:border-b-0">
+                <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full" style={{ background: l.ok ? '#4ade80' : '#dc2626' }} />
+                <span className="w-[150px] shrink-0 text-muted">
+                  {new Date(l.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+                </span>
+                <span className="w-[70px] shrink-0 font-semibold text-fg">{l.account}</span>
+                <span className="w-[170px] shrink-0 truncate text-fg" title={l.reason}>
+                  {l.reason}
+                </span>
+                <span className="min-w-0 flex-1 break-words text-soft">
+                  {l.result}
+                  {l.seconds != null ? ` · ${l.seconds}s` : ''}
+                  {l.exit_ip ? ` · ${l.exit_ip}` : ''}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      ) : null}
 
       <Card title={`GET /accounts${folder ? `/${folder}` : ''}${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{folder ? rows.length : data.accounts.length}</Badge>}>
         {suppliers.map((s) => {
