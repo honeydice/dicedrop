@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.28.1"
+VERSION = "0.28.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2841,6 +2841,8 @@ def warm_up_browse(page, minutes):
     def scroll(times):
         for _ in range(times):
             try:
+                if random.random() < 0.6:
+                    human_move(page, random.uniform(250, 1000), random.uniform(200, 600))  # the pointer drifts while reading
                 page.mouse.wheel(0, random.randint(350, 900))
             except Exception:
                 pass
@@ -2882,7 +2884,15 @@ def warm_up_browse(page, minutes):
                 address = link.get_attribute("href") or ""
                 if not address or "/sspa/" in address:
                     continue
-                page.goto(address if address.startswith("http") else "https://www.amazon.com" + address, wait_until="domcontentloaded", timeout=90000)
+                # Open the product the way a shopper does: move the pointer to its title and click it.
+                try:
+                    link.evaluate("e => e.removeAttribute('target')")  # keep it in this tab
+                    link.click(timeout=8000)
+                    page.wait_for_load_state("domcontentloaded", timeout=60000)
+                except Stop:
+                    raise
+                except Exception:
+                    page.goto(address if address.startswith("http") else "https://www.amazon.com" + address, wait_until="domcontentloaded", timeout=90000)
                 settle(page)
                 opened += 1
                 scroll(random.randint(3, 7))
