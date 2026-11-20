@@ -94,3 +94,13 @@ input::placeholder {
     min-height: calc(100vh / 0.8);
   }
 }
+
+/* Everything can be highlighted and copied, including the words inside rows and buttons. */
+button,
+[role='button'],
+[role='tab'],
+summary,
+label {
+  -webkit-user-select: text;
+  user-select: text;
+}

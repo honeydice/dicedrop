@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.22.0"
+VERSION = "0.22.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1967,6 +1967,58 @@ def open_order(page, number, tries=2, wait=6.0):
     return "", card_words
 
 
+def order_gone(page, number):
+    """After an order could not be opened: is it really gone from the account?
+    Returns ("cancelled", picture) when it is found under Cancelled Orders, ("missing", picture of Your Orders)
+    when Your Orders loads normally and the order is nowhere in the account, or ("", "") when Amazon simply
+    did not load properly this time."""
+    try:
+        page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        low = page_words(page, 5000).lower()
+        if "/ap/signin" in page.url or "unable to load" in low or "your orders" not in low:
+            return "", ""
+        listed = order_numbers(page)
+        if number in listed:
+            return "", ""
+        loaded = bool(listed) or "0 orders" in low or "not placed any orders" in low or "no orders" in low
+        if not loaded:
+            return "", ""
+        list_shot = picture(page, card_only=False)
+        # Amazon keeps cancelled orders on their own tab.
+        try:
+            if click_text(page, ["Cancelled Orders", "Cancelled orders", "Canceled Orders"]):
+                settle(page)
+                card = order_card(page, number)
+                if card is not None or number in order_numbers(page):
+                    shot = ""
+                    try:
+                        if card is not None:
+                            card.scroll_into_view_if_needed(timeout=5000)
+                            shot = base64.b64encode(card.screenshot(type="jpeg", quality=70)).decode()
+                    except Exception:
+                        shot = ""
+                    return "cancelled", shot or picture(page, card_only=False)
+        except Stop:
+            raise
+        except Exception:
+            pass
+        # Its own page: when that does not show the order either, it is no longer in the account.
+        page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        low = page_words(page, 4000).lower()
+        if "/ap/signin" in page.url or "sign in or create account" in low:
+            return "", ""
+        if number in page.content() and "unable to load" not in low and "can't find" not in low and "cannot find" not in low and "couldn't find" not in low:
+            return "", ""
+        return "missing", list_shot
+    except Stop:
+        raise
+    except Exception as failure:
+        log("looking for a missing order " + number + ": " + str(failure)[:160])
+        return "", ""
+
+
 def needs_verify(words):
     """Amazon is holding the order until the card is verified ("Your bank requires verification for the card...")."""
     low = (words or "").lower()
@@ -2153,6 +2205,16 @@ def check_order(page, order):
 
     kind, card_words = ("details", "") if seen_hold else open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0))
     if not kind:
+        gone, shot = order_gone(page, number)
+        if gone == "cancelled":
+            log("order " + number + " is under Cancelled Orders")
+            result.update({"state": "cancelled", "note": "", "screenshot": shot})
+            return result
+        if gone == "missing":
+            # Your Orders loads fine and this order is not in the account. DiceDrop marks it after it is missing three checks in a row.
+            log("order " + number + " is not in the Amazon account any more (Your Orders loaded, order not listed, its page does not show it)")
+            result.update({"missing": True, "screenshot": shot})
+            return result
         log("order " + number + " could not be opened on Amazon this time; it is checked again next round")
         return result
 

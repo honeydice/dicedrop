@@ -13,7 +13,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{var t=localStorage.getItem('dd-theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}",
+              "try{var t=localStorage.getItem('dd-theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}" +
+              // Highlighting words inside a row or button must not also press it.
+              "document.addEventListener('click',function(e){try{var s=window.getSelection();if(s&&!s.isCollapsed&&s.toString().trim()&&e.target instanceof Node&&s.containsNode(e.target,true)){e.stopPropagation();e.preventDefault();}}catch(x){}},true);",
           }}
         />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
