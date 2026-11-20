@@ -30,10 +30,23 @@ export function useLive<T>(fn: string, args: Record<string, unknown> | undefined
   }, [supabase, fn, key]);
 
   useEffect(() => {
-    if (first.current) first.current = false;
-    else void refresh();
+    // Always load once on arrival: the page the browser shows may be a copy it kept from earlier.
+    first.current = false;
+    void refresh();
     const timer = setInterval(() => void refresh(), intervalMs);
-    return () => clearInterval(timer);
+    // Phones pause timers while the browser tab is in the background: catch up the moment it is back.
+    const onBack = () => {
+      if (document.visibilityState !== 'hidden') void refresh();
+    };
+    document.addEventListener('visibilitychange', onBack);
+    window.addEventListener('focus', onBack);
+    window.addEventListener('pageshow', onBack);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onBack);
+      window.removeEventListener('focus', onBack);
+      window.removeEventListener('pageshow', onBack);
+    };
   }, [refresh, intervalMs]);
 
   return { data, error, setError, refresh, supabase };
