@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.19.6"
+VERSION = "0.20.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -34,8 +34,81 @@ HEARTBEAT_SECONDS = 15
 UPDATE_CHECK_SECONDS = 60
 AGENT = "DiceDropWorker/" + VERSION
 
-job_lock = threading.Lock()
-current_job = {"text": ""}
+class Slots:
+    """How many jobs this box runs at the same time (each one is one account in its own browser)."""
+
+    def __init__(self, size=1):
+        self.size = size
+        self.active = 0
+        self.guard = threading.Lock()
+
+    def resize(self, size):
+        with self.guard:
+            self.size = max(1, min(int(size), 8))
+
+    def acquire(self, blocking=False):
+        with self.guard:
+            if self.active < self.size:
+                self.active += 1
+                return True
+            return False
+
+    def release(self):
+        with self.guard:
+            self.active = max(0, self.active - 1)
+
+    def locked(self):
+        return self.active > 0
+
+
+class PerJob(threading.local):
+    """Each running job keeps its own notes (screenshot, flags, what it is doing), so jobs never mix."""
+
+    def __init__(self):
+        self.data = {"text": ""}
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
+        if key == "text":
+            with state_guard:
+                if value:
+                    running_text[threading.get_ident()] = str(value)
+                else:
+                    running_text.pop(threading.get_ident(), None)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+
+state_guard = threading.Lock()
+running_text = {}      # what each running job is doing, for the VPS page
+busy_accounts = set()  # an account is only ever open in one browser at a time
+started_orders = set() # an order run is only ever started once by this worker
+job_lock = Slots(1)
+current_job = PerJob()
+install_guard = threading.Lock()
+stderr_guard = threading.Lock()
+stderr_users = [0, None]
+
+
+def start_job(target, argument, label, order_id=""):
+    """Runs one job on its own thread and frees its account when it ends, whatever happens."""
+    def run():
+        try:
+            target(argument)
+        finally:
+            with state_guard:
+                busy_accounts.discard(label)
+                running_text.pop(threading.get_ident(), None)
+
+    with state_guard:
+        busy_accounts.add(label)
+        if order_id:
+            started_orders.add(order_id)
+    threading.Thread(target=run, daemon=True).start()
 
 
 recent_lines = []
@@ -484,26 +557,38 @@ ERR_FILE = "/app/driver-errors.log"
 
 def capture_stderr():
     """Send low-level error output to a file during a job, so the reason for a crash can be reported to DiceDrop."""
-    try:
-        saved = os.dup(2)
-        handle = os.open(ERR_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.dup2(handle, 2)
-        os.close(handle)
-        return saved
-    except Exception:
-        return None
+    with stderr_guard:
+        stderr_users[0] += 1
+        if stderr_users[0] > 1:
+            return None
+        try:
+            saved = os.dup(2)
+            handle = os.open(ERR_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.dup2(handle, 2)
+            os.close(handle)
+            stderr_users[1] = saved
+            return saved
+        except Exception:
+            stderr_users[1] = None
+            return None
 
 
 def restore_stderr(saved):
     detail = ""
-    try:
-        if saved is not None:
-            os.dup2(saved, 2)
-            os.close(saved)
-        with open(ERR_FILE, "r", errors="replace") as handle:
-            detail = " ".join(handle.read().split())[-500:]
-    except Exception:
-        pass
+    with stderr_guard:
+        stderr_users[0] = max(0, stderr_users[0] - 1)
+        try:
+            with open(ERR_FILE, "r", errors="replace") as handle:
+                detail = " ".join(handle.read().split())[-500:]
+        except Exception:
+            pass
+        if stderr_users[0] == 0 and stderr_users[1] is not None:
+            try:
+                os.dup2(stderr_users[1], 2)
+                os.close(stderr_users[1])
+            except Exception:
+                pass
+            stderr_users[1] = None
     return detail
 
 
@@ -527,7 +612,8 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
             raise Stop("No dedicated proxy is attached to this account.")
 
         stage[0] = "installing the remote control"
-        ensure_playwright()
+        with install_guard:
+            ensure_playwright()
         from playwright.sync_api import sync_playwright
 
         box_ip = direct_ip()
@@ -2027,34 +2113,39 @@ def main():
     last_update_check = time.time()
     while True:
         try:
-            state = current_job["text"] or kameleo_state()
+            with state_guard:
+                doing = " | ".join(running_text.values())
+            state = doing or kameleo_state()
             reply = call("/api/worker/v1/heartbeat", {"version": VERSION, "hostname": socket.gethostname(), "state": state})
+            job_lock.resize(reply.get("max_jobs") or 1)
             if reply.get("desired_state") != "pause":
-                started = False
                 for account in reply.get("accounts", []):
-                    if account.get("signin_requested") and job_lock.acquire(blocking=False):
-                        log("sign-in requested for " + account["label"])
-                        threading.Thread(target=sign_in_job, args=(account["label"],), daemon=True).start()
-                        started = True
-                        break
-                if not started:
-                    for job in reply.get("order_jobs", []):
-                        if job.get("run_kind") in ("cart_only", "place_order") and job_lock.acquire(blocking=False):
-                            log(str(job.get("run_kind")) + " run requested for " + str(job.get("order_number")))
-                            threading.Thread(target=cart_only_job, args=(job,), daemon=True).start()
-                            started = True
-                            break
-                if not started:
-                    for job in reply.get("tracking_jobs", []):
-                        if job.get("orders") and job_lock.acquire(blocking=False):
-                            log("order check due for " + str(job.get("account_label")) + " (" + str(len(job["orders"])) + " open)")
-                            threading.Thread(target=tracking_job, args=(job,), daemon=True).start()
-                            break
+                    label = account.get("label")
+                    if account.get("signin_requested") and label not in busy_accounts and job_lock.acquire(blocking=False):
+                        log("sign-in requested for " + label)
+                        start_job(sign_in_job, label, label)
+                for job in reply.get("order_jobs", []):
+                    label = job.get("account_label") or ""
+                    if job.get("run_kind") not in ("cart_only", "place_order") or not label:
+                        continue
+                    token = job.get("run_token") or job.get("id")
+                    if token in started_orders or label in busy_accounts:
+                        continue
+                    if job_lock.acquire(blocking=False):
+                        log(str(job.get("run_kind")) + " run requested for " + str(job.get("order_number")) + " on " + label)
+                        start_job(cart_only_job, job, label, token)
+                for job in reply.get("tracking_jobs", []):
+                    label = job.get("account_label") or ""
+                    if not job.get("orders") or not label or label in busy_accounts:
+                        continue
+                    if job_lock.acquire(blocking=False):
+                        log("order check due for " + label + " (" + str(len(job["orders"])) + " open)")
+                        start_job(tracking_job, job, label)
         except urllib.error.HTTPError as error:
             log("DiceDrop answered " + str(error.code) + ". " + error.read().decode()[:200])
         except Exception as error:
             log("could not reach DiceDrop: " + str(error))
-        if time.time() - last_update_check > UPDATE_CHECK_SECONDS and not current_job["text"]:
+        if time.time() - last_update_check > UPDATE_CHECK_SECONDS and not job_lock.locked():
             last_update_check = time.time()
             if newer_version_available():
                 log("a newer worker is available. restarting to pick it up.")

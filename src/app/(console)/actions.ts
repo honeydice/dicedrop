@@ -712,6 +712,20 @@ export async function setCheckInterval(minutes: number): Promise<Result> {
   }
 }
 
+/** How many orders one VPS works on at the same time (each on its own account). */
+export async function setOrdersAtOnce(count: number): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const n = Math.floor(Number(count));
+    if (!Number.isFinite(n) || n < 1 || n > 8) return { ok: false, error: 'Orders at once should be between 1 and 8.' };
+    const { error } = await ctx.db.rpc('dd_ops_set_orders_at_once', { p_count: n });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 export async function setAccountsPerBox(count: number): Promise<Result> {
   try {
     const ctx = await operatorDb();

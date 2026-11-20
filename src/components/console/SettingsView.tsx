@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, setCheckInterval, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, setCheckInterval, setOrdersAtOnce, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
@@ -42,6 +42,7 @@ export function SettingsView({
   cards,
   proxies,
   perBox,
+  atOnce,
   kameleoSetAt,
   checkEvery,
 }: {
@@ -54,6 +55,7 @@ export function SettingsView({
   cards: OpsCard[];
   proxies: OpsProxy[];
   perBox: number;
+  atOnce: number;
   kameleoSetAt: string | null;
   checkEvery: number;
 }) {
@@ -90,6 +92,7 @@ export function SettingsView({
   const [kameleoDraft, setKameleoDraft] = useState('');
   const [checkDraft, setCheckDraft] = useState(String(checkEvery));
   const [perBoxDraft, setPerBoxDraft] = useState(String(perBox));
+  const [atOnceDraft, setAtOnceDraft] = useState(String(atOnce));
   const [proxyText, setProxyText] = useState('');
   const [proxyProvider, setProxyProvider] = useState('');
   const [proxyNotice, setProxyNotice] = useState('');
@@ -129,7 +132,7 @@ export function SettingsView({
     cards: `${cards.length} card${cards.length === 1 ? '' : 's'}`,
     'two-step codes': `${generating} of ${twoStep.length} generating`,
     'order checks': `every ${checkEvery} minutes`,
-    'vps capacity': `${perBox} accounts per vps`,
+    'vps capacity': `${perBox} accounts per vps · ${atOnce} orders at once`,
     'day boundary': timezone,
     selectors: `${selectors.length} selectors`,
     operators: `${operators.length} operator${operators.length === 1 ? '' : 's'}`,
@@ -540,6 +543,17 @@ export function SettingsView({
               <input id="per-box" type="number" min={1} max={50} value={perBoxDraft} onChange={(e) => setPerBoxDraft(e.target.value)} className={field} />
             </div>
             <button type="button" disabled={busy || Number(perBoxDraft) === perBox} className={btn} onClick={() => void save(() => setAccountsPerBox(Number(perBoxDraft)))}>
+              Save
+            </button>
+          </div>
+          <div className="flex flex-wrap items-end gap-3 px-5 pb-4">
+            <div className="basis-44">
+              <label htmlFor="at-once" className={label}>
+                Orders at once per VPS
+              </label>
+              <input id="at-once" type="number" min={1} max={8} value={atOnceDraft} onChange={(e) => setAtOnceDraft(e.target.value)} className={field} />
+            </div>
+            <button type="button" disabled={busy || Number(atOnceDraft) === atOnce} className={btn} onClick={() => void save(() => setOrdersAtOnce(Number(atOnceDraft)))}>
               Save
             </button>
           </div>

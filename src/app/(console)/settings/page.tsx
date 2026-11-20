@@ -15,6 +15,7 @@ export default async function SettingsPage() {
   let operators: { email: string | null }[] = [];
   let timezone = 'America/Chicago';
   let perBox = 5;
+  let atOnce = 2;
   let kameleoSetAt: string | null = null;
   let checkEvery = 30;
 
@@ -28,7 +29,7 @@ export default async function SettingsPage() {
     const [s, o, p, c, a, px] = await Promise.all([
       supabase.from('selectors').select('key, value, description').order('key', { ascending: true }),
       supabase.from('platform_admins').select('email').order('created_at', { ascending: true }),
-      supabase.from('platform_settings').select('timezone, accounts_per_box, kameleo_set_at, tracking_interval_minutes').eq('id', 1).maybeSingle(),
+      supabase.from('platform_settings').select('timezone, accounts_per_box, orders_at_once, kameleo_set_at, tracking_interval_minutes').eq('id', 1).maybeSingle(),
       supabase.rpc('dd_ops_contabo_status'),
       supabase.rpc('dd_ops_accounts'),
       supabase.rpc('dd_ops_proxies'),
@@ -41,6 +42,7 @@ export default async function SettingsPage() {
     operators = (o.data as { email: string | null }[] | null) ?? [];
     timezone = (p.data as { timezone: string } | null)?.timezone ?? timezone;
     perBox = (p.data as { accounts_per_box?: number } | null)?.accounts_per_box ?? perBox;
+    atOnce = (p.data as { orders_at_once?: number } | null)?.orders_at_once ?? atOnce;
     kameleoSetAt = (p.data as { kameleo_set_at?: string | null } | null)?.kameleo_set_at ?? null;
     checkEvery = (p.data as { tracking_interval_minutes?: number } | null)?.tracking_interval_minutes ?? checkEvery;
     error = s.error?.message ?? o.error?.message ?? p.error?.message ?? '';
@@ -48,5 +50,5 @@ export default async function SettingsPage() {
     error = 'Could not load settings. Refresh to try again.';
   }
 
-  return <SettingsView selectors={selectors} operators={operators.map((x) => x.email ?? '')} timezone={timezone} initialError={error} contabo={contabo} twoStep={twoStep} cards={cards} proxies={proxies} perBox={perBox} kameleoSetAt={kameleoSetAt} checkEvery={checkEvery} />;
+  return <SettingsView selectors={selectors} operators={operators.map((x) => x.email ?? '')} timezone={timezone} initialError={error} contabo={contabo} twoStep={twoStep} cards={cards} proxies={proxies} perBox={perBox} atOnce={atOnce} kameleoSetAt={kameleoSetAt} checkEvery={checkEvery} />;
 }
