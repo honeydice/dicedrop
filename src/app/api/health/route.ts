@@ -19,8 +19,7 @@ async function checkAi() {
         model: 'claude-sonnet-5-5',
         max_tokens: 60,
         tools: [{ name: 'act', description: 'Answer.', input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['done', 'stop'] } }, required: ['action'] } }],
-        tool_choice: { type: 'tool', name: 'act' },
-        messages: [{ role: 'user', content: 'Answer with the action done.' }],
+        messages: [{ role: 'user', content: 'Call the act tool with the action done.' }],
       }),
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
