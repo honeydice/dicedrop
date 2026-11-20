@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getAccountLog, getAccountPassword, getSnapshot, requestSignin, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { getAccountLog, getAccountPassword, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -28,8 +28,20 @@ function signIn(a: OpsAccount): { text: string; color: string } {
   if (a.session_state === 'needs_sign_in') return { text: 'sign-in needed', color: TONE.warn };
   if (!a.box_id) return { text: 'no vps', color: TONE.muted };
   if (a.box_online !== true) return { text: 'vps offline', color: TONE.bad };
+  if (isWarming(a)) return { text: 'warming up', color: 'rgb(var(--accent))' };
   if (a.session_state === 'signed_in') return { text: 'signed in', color: TONE.good };
   return { text: 'not signed in yet', color: TONE.muted };
+}
+
+function isWarming(a: OpsAccount): boolean {
+  return Boolean(a.warmup_until && new Date(a.warmup_until).getTime() > Date.now());
+}
+
+function warmupLeft(a: OpsAccount): string {
+  if (!isWarming(a)) return 'off';
+  const hours = Math.max(1, Math.round((new Date(a.warmup_until as string).getTime() - Date.now()) / 3600000));
+  const left = hours >= 24 ? `${Math.round(hours / 24)}d left` : `${hours}h left`;
+  return `${left} · ${a.warmup_sessions ?? 0} session${(a.warmup_sessions ?? 0) === 1 ? '' : 's'}`;
 }
 
 function tone(a: OpsAccount): string {
@@ -407,6 +419,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                           ['outgoing ip', a.exit_ip ?? 'not checked yet'],
                           ['device identity', a.has_profile ? 'created' : 'not created yet'],
                           ['last seen', a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'],
+                          ['warm-up', warmupLeft(a)],
                         ]}
                       />
                     </Panel>
@@ -467,6 +480,24 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         {pw?.id === a.id ? 'Hide password' : 'Show password'}
                       </button>
                     ) : null}
+                    <select
+                      aria-label="Warm-up"
+                      disabled={busy}
+                      className={btn}
+                      value=""
+                      onChange={(e) => {
+                        const days = Number(e.target.value);
+                        if (e.target.value !== '') void run(() => setWarmup(a.id, days));
+                      }}
+                    >
+                      <option value="">{isWarming(a) ? 'Warming up' : 'Warm-up'}</option>
+                      {[1, 2, 3, 5, 7].map((d) => (
+                        <option key={d} value={d}>
+                          {d} day{d === 1 ? '' : 's'}
+                        </option>
+                      ))}
+                      {isWarming(a) ? <option value="0">Turn off</option> : null}
+                    </select>
                     {a.box_online !== true ? <span className="font-mono text-xs text-muted">sign-in needs this account&apos;s vps online</span> : null}
                   </div>
 

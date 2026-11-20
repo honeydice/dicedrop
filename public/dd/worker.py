@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.21.1"
+VERSION = "0.22.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2256,6 +2256,105 @@ def tracking_job(job):
         job_lock.release()
 
 
+WARM_SEARCHES = ["desk lamp", "phone charger", "water bottle", "notebook", "kitchen towels", "led light bulbs", "storage bins", "coffee mug",
+                 "running socks", "usb c cable", "dog toys", "throw pillow", "bluetooth speaker", "garden hose", "tool set", "backpack",
+                 "wall clock", "shower curtain", "hand soap", "air fryer", "picture frames", "board games", "yoga mat", "office chair"]
+
+
+def warm_up_browse(page, minutes):
+    """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
+    It never adds to the cart and never goes to checkout. Returns a short summary."""
+    ends = time.time() + minutes * 60
+    searched, opened = 0, 0
+
+    def scroll(times):
+        for _ in range(times):
+            try:
+                page.mouse.wheel(0, random.randint(350, 900))
+            except Exception:
+                pass
+            pause(1.2, 3.5)
+
+    page.goto("https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
+    settle(page)
+    scroll(random.randint(1, 3))
+    for term in random.sample(WARM_SEARCHES, 4):
+        if time.time() > ends:
+            break
+        box = first_visible(page, "#twotabsearchtextbox, input[name='field-keywords']")
+        if box is None:
+            page.goto("https://www.amazon.com/s?k=" + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
+        else:
+            box.click()
+            box.fill("")
+            box.press_sequentially(term, delay=random.randint(70, 140))
+            pause(0.4, 1.0)
+            box.press("Enter")
+        settle(page)
+        searched += 1
+        scroll(random.randint(2, 4))
+        for _ in range(random.randint(1, 2)):
+            if time.time() > ends:
+                break
+            try:
+                links = page.locator("div[data-component-type='s-search-result'] h2 a, div[data-component-type='s-search-result'] a.a-link-normal.s-no-outline")
+                count = min(links.count(), 12)
+                if count == 0:
+                    break
+                link = links.nth(random.randint(0, count - 1))
+                address = link.get_attribute("href") or ""
+                if not address or "/sspa/" in address:
+                    continue
+                page.goto(address if address.startswith("http") else "https://www.amazon.com" + address, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+                opened += 1
+                scroll(random.randint(3, 7))
+                pause(2.0, 6.0)
+                page.go_back(wait_until="domcontentloaded", timeout=60000)
+                settle(page)
+            except Stop:
+                raise
+            except Exception:
+                break
+    try:
+        page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        scroll(1)
+    except Exception:
+        pass
+    return "browsed " + str(searched) + " search" + ("" if searched == 1 else "es") + " and " + str(opened) + " product" + ("" if opened == 1 else "s")
+
+
+def warm_up_job(label):
+    problem = ""
+    try:
+        current_job["text"] = "warming up " + label
+
+        def work(page, secrets, stage):
+            stage[0] = "signing in on Amazon"
+            state, reason = amazon_sign_in(page, label, secrets)
+            if state != "signed_in":
+                report(label, session_state=state, error=reason, note="sign-in did not finish")
+                raise Stop("Amazon sign-in did not finish. " + reason)
+            report(label, session_state="signed_in", error="")
+            stage[0] = "browsing Amazon"
+            return warm_up_browse(page, random.uniform(3.0, 5.5))
+
+        _, problem, _, _ = run_in_account_browser(
+            label, lambda text: None, work, reason="warm-up",
+            summary=lambda r, e: (False, e) if e else (True, str(r or "browsed")))
+        log("warm-up for " + label + " finished" + (": " + problem if problem else ""))
+    except Exception as failure:
+        problem = "The warm-up could not run: " + str(failure)[:200]
+    finally:
+        try:
+            call("/api/worker/v1/accounts/warmed", {"account": label, "error": problem})
+        except Exception as failure:
+            log("could not record the warm-up: " + str(failure)[:200])
+        current_job["text"] = ""
+        job_lock.release()
+
+
 def read_totals(page):
     import re
 
@@ -2488,6 +2587,14 @@ def main():
                     if job_lock.acquire(blocking=False):
                         log("order check due for " + label + " (" + str(len(job["orders"])) + " open)")
                         start_job(tracking_job, job, label)
+                # Warm-up browsing comes last: orders and order checks always go first.
+                for job in reply.get("warmup_jobs", []):
+                    label = job.get("account_label") or ""
+                    if not label or label in busy_accounts:
+                        continue
+                    if job_lock.acquire(blocking=False):
+                        log("warm-up session due for " + label)
+                        start_job(warm_up_job, label, label)
         except urllib.error.HTTPError as error:
             log("DiceDrop answered " + str(error.code) + ". " + error.read().decode()[:200])
         except Exception as error:

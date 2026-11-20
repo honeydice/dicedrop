@@ -342,6 +342,18 @@ export interface AccessLine {
   box: string | null;
 }
 
+/** Turns warm-up on for an account for a number of days (0 turns it off). While warming up it only browses. */
+export async function setWarmup(id: string, days: number): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_warmup', { p_account: id, p_days: Math.max(0, Math.round(days)) });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** The saved Amazon password for one account, for the operator to sign in by hand. Each view is written to the account's log. */
 export async function getAccountPassword(id: string): Promise<string | null> {
   try {

@@ -168,6 +168,11 @@ export interface OpsAccount {
   max_pending_orders: number | null;
   auto_tracking: boolean;
   order_scan: boolean;
+  /** Warm-up: until this time the account only browses and gets no orders. */
+  warmup_until?: string | null;
+  warmup_days?: number | null;
+  warmup_last_at?: string | null;
+  warmup_sessions?: number;
   password_set: boolean;
   awaiting_tracking: number;
   signin_requested_at: string | null;
