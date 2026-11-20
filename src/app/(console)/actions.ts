@@ -299,7 +299,7 @@ export async function saveAccount(id: string | null, input: AccountForm): Promis
     const ctx = await operatorDb();
     if (!ctx) return DENIED;
     if (!input.label.trim()) return { ok: false, error: 'Give the account a label, like "AMZ-01".' };
-    if (!input.login_email.trim()) return { ok: false, error: 'The Amazon sign-in email is required.' };
+    // The Amazon email can be added later: an account can start as just its computer (VPS + proxy).
     for (const [name, value] of [
       ['Max pending orders', input.max_pending_orders],
       ['Daily orders price limit', input.daily_spend_cap],
