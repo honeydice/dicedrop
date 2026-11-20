@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.24.1"
+VERSION = "0.25.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -603,6 +603,191 @@ def restore_stderr(saved):
     return detail
 
 
+# ---------------------------------------------------------------- Multilogin (a second browser engine)
+#
+# An account can run on Multilogin instead of Kameleo: the worker then opens the account's existing Multilogin
+# profile (the one already used by hand, with its cookies and its proxy saved inside it) and drives that.
+# The Multilogin agent is installed inside this worker's container the first time it is needed.
+
+MLX_API = "https://api.multilogin.com"
+MLX_LAUNCHER = "https://launcher.mlx.yt:45001"
+MLX_DEB = "https://mlxdists.s3.eu-west-3.amazonaws.com/mlx/latest/multiloginx-amd64.deb"
+mlx_state = {"token": "", "at": 0.0, "agent": None, "screen": None}
+mlx_guard = threading.Lock()
+
+
+def mlx_request(method, url, body=None, token="", timeout=90):
+    import ssl
+
+    headers = {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": AGENT}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
+    contexts = [None]
+    if url.startswith(MLX_LAUNCHER):
+        contexts.append(ssl._create_unverified_context())  # the launcher is this box itself (127.0.0.1)
+    last = None
+    for context in contexts:
+        try:
+            with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+                raw = response.read().decode()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode()[:400]
+            raise RuntimeError("Multilogin answered " + str(error.code) + ": " + detail)
+        except urllib.error.URLError as error:
+            last = error
+            if "CERTIFICATE" not in str(error).upper() and "SSL" not in str(error).upper():
+                break
+    raise ConnectionError(str(last))
+
+
+def mlx_token(fresh=False):
+    import hashlib
+
+    if mlx_state["token"] and not fresh and time.time() - mlx_state["at"] < 20 * 60:
+        return mlx_state["token"]
+    creds = call("/api/worker/v1/multilogin", {})
+    if not creds.get("email") or not creds.get("password"):
+        raise Stop("No Multilogin sign-in is saved. Add it in DiceDrop under Settings > multilogin.")
+    try:
+        reply = mlx_request("POST", MLX_API + "/user/signin", {"email": creds["email"], "password": hashlib.md5(creds["password"].encode()).hexdigest()})
+    except RuntimeError as failure:
+        raise Stop("Multilogin did not accept the saved sign-in. " + str(failure)[:200])
+    token = (reply.get("data") or {}).get("token") or ""
+    if not token:
+        raise Stop("Multilogin sign-in gave no token: " + json.dumps(reply)[:200])
+    mlx_state.update({"token": token, "at": time.time()})
+    return token
+
+
+def mlx_launcher_up():
+    try:
+        with socket.create_connection(("127.0.0.1", 45001), timeout=2):
+            return True
+    except Exception:
+        return False
+
+
+def ensure_mlx_agent():
+    """Installs (once) and starts Multilogin's agent in this container, on a virtual screen."""
+    import shutil
+
+    with mlx_guard:
+        if mlx_launcher_up():
+            return
+        env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+        tool = shutil.which("mlx")
+        if not tool or not shutil.which("Xvfb"):
+            log("installing Multilogin on this box (one time, a few minutes)")
+            subprocess.call(["apt-get", "update", "-qq"], env=env, stdout=subprocess.DEVNULL)
+            wanted = ["xvfb", "ca-certificates", "libnss3", "libatk1.0-0", "libatk-bridge2.0-0", "libcups2", "libdrm2", "libgbm1", "libxkbcommon0",
+                      "libxcomposite1", "libxdamage1", "libxfixes3", "libxrandr2", "libpango-1.0-0", "libcairo2", "libgtk-3-0", "fonts-liberation", "xdg-utils", "procps"]
+            subprocess.call(["apt-get", "install", "-y", "-qq", "--no-install-recommends"] + wanted, env=env, stdout=subprocess.DEVNULL)
+            for sound in ("libasound2", "libasound2t64"):
+                if subprocess.call(["apt-get", "install", "-y", "-qq", "--no-install-recommends", sound], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
+                    break
+            package = "/tmp/multiloginx.deb"
+            request = urllib.request.Request(MLX_DEB, headers={"User-Agent": AGENT})
+            with urllib.request.urlopen(request, timeout=600) as response, open(package, "wb") as out:
+                shutil.copyfileobj(response, out)
+            done = subprocess.run(["apt-get", "install", "-y", "-qq", package], env=env, capture_output=True, text=True)
+            if done.returncode != 0:
+                log("Multilogin package install said: " + (done.stderr or done.stdout)[-400:])
+            tool = shutil.which("mlx")
+            if not tool:
+                for folder in ("/usr/bin", "/usr/local/bin", "/opt/mlx", "/opt/multilogin", "/opt/Multilogin"):
+                    for name in ("mlx", "agent.bin", "mlx-agent"):
+                        if os.path.exists(os.path.join(folder, name)):
+                            tool = os.path.join(folder, name)
+            if not tool:
+                raise Stop("Multilogin was downloaded but its program was not found on the box. " + (done.stderr or done.stdout)[-300:])
+        if mlx_state["screen"] is None or mlx_state["screen"].poll() is not None:
+            mlx_state["screen"] = subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1.5)
+        log("starting the Multilogin agent")
+        out = open("/tmp/mlx-agent.log", "ab")
+        mlx_state["agent"] = subprocess.Popen([tool], env=dict(os.environ, DISPLAY=":99", HOME=os.environ.get("HOME") or "/root"), stdout=out, stderr=out)
+        for _ in range(120):
+            if mlx_launcher_up():
+                time.sleep(3)
+                return
+            if mlx_state["agent"].poll() is not None:
+                break
+            time.sleep(1)
+        tail = ""
+        try:
+            tail = open("/tmp/mlx-agent.log", "rb").read()[-500:].decode(errors="replace")
+        except Exception:
+            pass
+        raise Stop("The Multilogin agent did not start on this box. " + " ".join(tail.split())[-400:])
+
+
+def mlx_find(label, secrets):
+    """The folder and profile ids of the account's Multilogin profile, found once by its name (or given as an id)."""
+    import re
+
+    if secrets.get("mlx_profile_id") and secrets.get("mlx_folder_id"):
+        return secrets["mlx_folder_id"], secrets["mlx_profile_id"]
+    wanted = (secrets.get("mlx_profile") or "").strip()
+    if not wanted:
+        raise Stop("No Multilogin profile is named for this account.")
+    uuid = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    both = re.fullmatch(r"\s*(" + uuid + r")\s*[/ ,]\s*(" + uuid + r")\s*", wanted)
+    if both:
+        folder, profile = both.group(1), both.group(2)
+    else:
+        try:
+            reply = mlx_request("POST", MLX_API + "/profile/search", {"is_removed": False, "limit": 100, "offset": 0, "search_text": "" if re.fullmatch(uuid, wanted) else wanted,
+                                                                      "storage_type": "all", "order_by": "created_at", "sort": "asc"}, token=mlx_token())
+        except RuntimeError as failure:
+            raise Stop("Multilogin could not search for the profile \"" + wanted + "\". " + str(failure)[:260])
+        rows = (reply.get("data") or {}).get("profiles") or []
+        match = [r for r in rows if str(r.get("id", "")).lower() == wanted.lower() or str(r.get("name", "")).strip().lower() == wanted.lower()]
+        if len(match) != 1:
+            names = ", ".join(str(r.get("name")) for r in rows[:12])
+            raise Stop(("No Multilogin profile is named \"" + wanted + "\"." if not match else "More than one Multilogin profile is named \"" + wanted + "\".")
+                       + (" Profiles found: " + names if names else " The search came back empty: " + json.dumps(reply)[:200]))
+        folder, profile = str(match[0].get("folder_id") or ""), str(match[0].get("id") or "")
+        if not folder or not profile:
+            raise Stop("Multilogin's answer for \"" + wanted + "\" has no folder or profile id: " + json.dumps(match[0])[:260])
+    report(label, mlx_profile_id=profile, mlx_folder_id=folder, note="Multilogin profile found")
+    return folder, profile
+
+
+def mlx_start(label, secrets):
+    """Starts the account's Multilogin profile on this box. Returns (profile id, the address the remote control connects to)."""
+    ensure_mlx_agent()
+    folder, profile = mlx_find(label, secrets)
+    address = MLX_LAUNCHER + "/api/v2/profile/f/" + folder + "/p/" + profile + "/start?automation_type=playwright&headless_mode=false"
+    reply = None
+    for attempt in range(3):
+        try:
+            reply = mlx_request("GET", address, token=mlx_token(fresh=attempt > 0), timeout=180)
+            break
+        except RuntimeError as failure:
+            text = str(failure)
+            if attempt == 2:
+                raise Stop("Multilogin could not start the profile for " + label + ". " + text[:300])
+            if "already" in text.lower() or "running" in text.lower() or "locked" in text.lower():
+                log("Multilogin says the profile for " + label + " is already open; closing it and trying again")
+                mlx_stop(profile)
+            time.sleep(6)
+        except ConnectionError as failure:
+            raise Stop("The Multilogin agent on this box is not answering. " + str(failure)[:200])
+    port = (reply.get("data") or {}).get("port")
+    if not port:
+        raise Stop("Multilogin started the profile but gave no connection port: " + json.dumps(reply)[:260])
+    return profile, "http://127.0.0.1:" + str(port)
+
+
+def mlx_stop(profile):
+    try:
+        mlx_request("GET", MLX_LAUNCHER + "/api/v1/profile/stop/p/" + profile, token=mlx_token(), timeout=90)
+    except Exception as failure:
+        log("could not stop the Multilogin profile cleanly: " + str(failure)[:200])
+
+
 DEVICE_JS = """() => {
   let gl = '';
   try {
@@ -662,6 +847,7 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
     """Opens the account's own Kameleo browser on its dedicated proxy, runs `work(page, secrets)`, and always
     takes a screenshot and closes the profile afterwards. Returns (result, error text, screenshot, outgoing ip)."""
     profile_id = ""
+    engine = "kameleo"
     result, error, shot, exit_ip = None, "", "", ""
     stage = ["getting ready"]
     opened_at = time.time()
@@ -670,7 +856,8 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
         secrets = call("/api/worker/v1/accounts/secrets", {"account": label})
         if not secrets.get("password"):
             raise Stop("No Amazon password is saved for this account.")
-        if not secrets.get("proxy") or not secrets["proxy"].get("host"):
+        engine = "multilogin" if secrets.get("engine") == "multilogin" else "kameleo"
+        if engine == "kameleo" and (not secrets.get("proxy") or not secrets["proxy"].get("host")):
             raise Stop("No dedicated proxy is attached to this account.")
 
         stage[0] = "installing the remote control"
@@ -679,14 +866,20 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
         from playwright.sync_api import sync_playwright
 
         box_ip = direct_ip()
-        stage[0] = "creating the device identity"
-        profile_id = ensure_profile(label, secrets)
+        mlx_endpoint = ""
+        if engine == "multilogin":
+            stage[0] = "opening the Multilogin profile"
+            note("opening the Multilogin profile")
+            profile_id, mlx_endpoint = mlx_start(label, secrets)
+        else:
+            stage[0] = "creating the device identity"
+            profile_id = ensure_profile(label, secrets)
         note("opening the browser")
 
         stage[0] = "starting the remote control"
         with sync_playwright() as playwright:
-            stage[0] = "connecting to the Kameleo browser"
-            endpoint = "ws://" + KAMELEO.split("://", 1)[1] + "/playwright/" + profile_id
+            stage[0] = "connecting to the " + ("Multilogin" if engine == "multilogin" else "Kameleo") + " browser"
+            endpoint = mlx_endpoint or ("ws://" + KAMELEO.split("://", 1)[1] + "/playwright/" + profile_id)
             # A proxy can refuse one connection (most often when the same account is opened again seconds
             # after its last session closed). Wait and try again before calling it a problem.
             browser = None
@@ -741,7 +934,9 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
         low_level = restore_stderr(saved_stderr)
         if error and low_level and not error.startswith(("Amazon", "No ", "The proxy", "This item", "Out of stock")):
             error = error + " | details: " + low_level
-        if profile_id:
+        if profile_id and engine == "multilogin":
+            mlx_stop(profile_id)
+        elif profile_id:
             try:
                 kameleo("POST", "/profiles/" + profile_id + "/stop", {})
             except Exception as failure:

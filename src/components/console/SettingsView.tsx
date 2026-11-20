@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { addCard, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, setCheckInterval, setOrdersAtOnce, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
+import { addCard, clearMultilogin, saveMultilogin, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, setCheckInterval, setOrdersAtOnce, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
 import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
@@ -44,6 +44,7 @@ export function SettingsView({
   perBox,
   atOnce,
   kameleoSetAt,
+  multiloginSetAt,
   checkEvery,
 }: {
   selectors: SelectorRow[];
@@ -57,6 +58,7 @@ export function SettingsView({
   perBox: number;
   atOnce: number;
   kameleoSetAt: string | null;
+  multiloginSetAt?: string | null;
   checkEvery: number;
 }) {
   const router = useRouter();
@@ -90,6 +92,8 @@ export function SettingsView({
   const [keyDraft, setKeyDraft] = useState('');
   const [card, setCard] = useState({ bank: '', last4: '', nickname: '' });
   const [kameleoDraft, setKameleoDraft] = useState('');
+  const [mlxEmail, setMlxEmail] = useState('');
+  const [mlxPassword, setMlxPassword] = useState('');
   const [checkDraft, setCheckDraft] = useState(String(checkEvery));
   const [perBoxDraft, setPerBoxDraft] = useState(String(perBox));
   const [atOnceDraft, setAtOnceDraft] = useState(String(atOnce));
@@ -128,6 +132,7 @@ export function SettingsView({
     appearance: 'light or dark',
     'contabo connection': connected ? `connected · ${contabo?.instance_count ?? 0} servers` : 'not connected',
     kameleo: kameleoSetAt ? 'token saved' : 'no token yet',
+    multilogin: multiloginSetAt ? 'sign-in saved' : 'not connected',
     proxies: `${proxies.length} proxies · ${proxiesFree} free`,
     cards: `${cards.length} card${cards.length === 1 ? '' : 's'}`,
     'two-step codes': `${generating} of ${twoStep.length} generating`,
@@ -283,6 +288,53 @@ export function SettingsView({
                 onClick={() => {
                   if (!window.confirm('Remove the Kameleo token? Boxes already installed keep running; new installs will need a token.')) return;
                   void save(() => clearKameleo());
+                }}
+              >
+                Remove
+              </button>
+            ) : null}
+          </form>
+        </Section>
+
+        <Section title="multilogin" summary={summary['multilogin']} open={openSet.has('multilogin')} onToggle={toggle}>
+          <form
+            className="flex flex-wrap items-end gap-3 px-5 py-4"
+            autoComplete="off"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const ok = await save(() => saveMultilogin(mlxEmail, mlxPassword));
+              if (ok) {
+                setMlxEmail('');
+                setMlxPassword('');
+              }
+            }}
+          >
+            <span className="mb-3.5">
+              <Dot color={multiloginSetAt ? TONE.good : TONE.muted} />
+            </span>
+            <div className="flex-1 basis-56">
+              <label htmlFor="mlx-email" className={label}>
+                Multilogin email
+              </label>
+              <input id="mlx-email" type="email" autoComplete="off" placeholder={multiloginSetAt ? `Saved ${when(multiloginSetAt)}` : 'you@example.com'} value={mlxEmail} onChange={(e) => setMlxEmail(e.target.value)} className={field} />
+            </div>
+            <div className="flex-1 basis-56">
+              <label htmlFor="mlx-password" className={label}>
+                Multilogin password
+              </label>
+              <input id="mlx-password" type="password" autoComplete="new-password" placeholder={multiloginSetAt ? 'Enter both again to replace' : ''} value={mlxPassword} onChange={(e) => setMlxPassword(e.target.value)} className={`${field} font-mono`} />
+            </div>
+            <button type="submit" disabled={busy || !mlxEmail.includes('@') || mlxPassword.length < 4} className={btnAccent}>
+              Save sign-in
+            </button>
+            {multiloginSetAt ? (
+              <button
+                type="button"
+                disabled={busy}
+                className={btnDanger}
+                onClick={() => {
+                  if (!window.confirm('Remove the Multilogin sign-in? Accounts set to Multilogin will stop opening.')) return;
+                  void save(() => clearMultilogin());
                 }}
               >
                 Remove

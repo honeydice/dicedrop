@@ -170,6 +170,10 @@ export interface OpsAccount {
   order_scan: boolean;
   /** Warm-up: until this time the account only browses and gets no orders. */
   /** Amazon has the account on hold (its own words), until it is verified. No orders are sent to it. */
+  /** Which browser the account runs in: kameleo (default) or multilogin, with the name of its Multilogin profile. */
+  engine?: string;
+  mlx_profile?: string | null;
+  mlx_found?: boolean;
   /** Who the outgoing (proxy) address belongs to: provider and city. */
   exit_ip_info?: string | null;
   hold_reason?: string | null;

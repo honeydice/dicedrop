@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, setAccountEngine, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -478,6 +478,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                           ['sign-in', sessionLabel(a.session_state)],
                           ['outgoing ip', a.exit_ip ?? 'not checked yet'],
                           ['address owner', a.exit_ip_info ?? 'not looked up yet'],
+                          ['browser', a.engine === 'multilogin' ? `Multilogin · ${a.mlx_profile ?? ''}${a.mlx_found ? '' : ' (not opened yet)'}` : 'Kameleo'],
                           ['device identity', a.has_profile ? 'created' : 'not created yet'],
                           ['last seen', a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'],
                           ['warm-up', warmupLeft(a)],
@@ -559,6 +560,24 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         Account verified · clear hold
                       </button>
                     ) : null}
+                    <select
+                      aria-label="Browser"
+                      disabled={busy}
+                      className={btn}
+                      value=""
+                      onChange={(e) => {
+                        const choice = e.target.value;
+                        if (choice === 'kameleo') void run(() => setAccountEngine(a.id, 'kameleo', ''));
+                        if (choice === 'multilogin') {
+                          const name = window.prompt('Name of this account\'s profile in Multilogin (exactly as it shows there):', a.mlx_profile ?? a.label);
+                          if (name && name.trim()) void run(() => setAccountEngine(a.id, 'multilogin', name.trim()));
+                        }
+                      }}
+                    >
+                      <option value="">{a.engine === 'multilogin' ? 'Browser: Multilogin' : 'Browser: Kameleo'}</option>
+                      {a.engine === 'multilogin' ? <option value="kameleo">Switch to Kameleo</option> : null}
+                      <option value="multilogin">{a.engine === 'multilogin' ? 'Change Multilogin profile' : 'Switch to Multilogin'}</option>
+                    </select>
                     <select
                       aria-label="Warm-up"
                       disabled={busy}

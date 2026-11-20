@@ -342,6 +342,41 @@ export interface AccessLine {
   box: string | null;
 }
 
+/** Saves the Multilogin sign-in the boxes use to open Multilogin profiles (kept encrypted in the database vault). */
+export async function saveMultilogin(email: string, password: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_multilogin_save', { p_email: email, p_password: password });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function clearMultilogin(): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_multilogin_clear');
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** Sets which browser an account runs in. For Multilogin, `profile` is the name (or id) of its existing Multilogin profile. */
+export async function setAccountEngine(id: string, engine: 'kameleo' | 'multilogin', profile: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_engine', { p_account: id, p_engine: engine, p_profile: profile || null });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Opens (or closes) the account's own VPS browser, to use by hand in a tab. */
 export async function setLiveBrowser(id: string, open: boolean): Promise<Result> {
   try {
