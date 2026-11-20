@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.25.0"
+VERSION = "0.25.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2524,8 +2524,10 @@ def check_order(page, order):
             log("order " + number + " is under Cancelled Orders")
             result.update({"state": "cancelled", "note": "", "screenshot": shot})
         elif gone == "missing":
-            log("order " + number + " opens by its own address but is not in Your Orders any more")
-            result.update({"missing": True, "screenshot": shot or result.get("screenshot", "")})
+            # The order's own page opens and shows a live order, so it stands. Amazon sometimes leaves an order out of
+            # the Your Orders list while it is still on its way (DD-100002 shipped the morning after it vanished from the list).
+            # An order counts as gone only when its own page no longer shows it either (see order_gone).
+            log("order " + number + " is not in the Your Orders list, but its own page shows it: it stands")
     current_job["unlisted"] = ""
     return result
 
