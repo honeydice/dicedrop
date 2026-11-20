@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.22.1"
+VERSION = "0.22.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1933,6 +1933,7 @@ def open_order(page, number, tries=2, wait=6.0):
                     if order_card(page, number) is not None:
                         return "list", card_words
             else:
+                current_job["unlisted"] = number
                 log("order " + number + " is not in the list; orders listed: " + ", ".join(sorted(order_numbers(page)))[:200])
                 try:
                     newest = page.locator(".order-card, .js-order-card").first
@@ -1967,7 +1968,7 @@ def open_order(page, number, tries=2, wait=6.0):
     return "", card_words
 
 
-def order_gone(page, number):
+def order_gone(page, number, listed_only=False):
     """After an order could not be opened: is it really gone from the account?
     Returns ("cancelled", picture) when it is found under Cancelled Orders, ("missing", picture of Your Orders)
     when Your Orders loads normally and the order is nowhere in the account, or ("", "") when Amazon simply
@@ -1985,6 +1986,28 @@ def order_gone(page, number):
         if not loaded:
             return "", ""
         list_shot = picture(page, card_only=False)
+        # A full first page means there may be more orders further back: look at the next two pages as well.
+        cards = 0
+        try:
+            cards = page.locator(".order-card, .js-order-card").count()
+        except Exception:
+            pass
+        start = 10
+        while cards >= 10 and start <= 20:
+            page.goto(ACCOUNT_PAGE + "?startIndex=" + str(start), wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            if number in order_numbers(page):
+                return "", ""
+            try:
+                cards = page.locator(".order-card, .js-order-card").count()
+            except Exception:
+                cards = 0
+            start += 10
+        if cards >= 10:
+            return "", ""  # a long order history: not being on the first pages proves nothing
+        if start > 10:
+            page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
         # Amazon keeps cancelled orders on their own tab.
         try:
             if click_text(page, ["Cancelled Orders", "Cancelled orders", "Canceled Orders"]):
@@ -2003,6 +2026,8 @@ def order_gone(page, number):
             raise
         except Exception:
             pass
+        if listed_only:
+            return "missing", list_shot
         # Its own page: when that does not show the order either, it is no longer in the account.
         page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
         settle(page)
@@ -2171,6 +2196,30 @@ def resolve_verify_steps(page, number, label):
 
 
 def check_order(page, order):
+    """One order's look at Amazon, plus one more question when the order is not in Your Orders: Amazon sometimes
+    takes an order out of the account while its own page still opens and says "Ordered". Such an order is reported
+    as missing (or cancelled, when it is under Cancelled Orders) instead of ordered."""
+    current_job["unlisted"] = ""
+    result = check_order_look(page, order)
+    number = order["amazon_order_id"]
+    if current_job.get("unlisted") == number and result.get("state") == "ordered" and not result.get("missing") and not order.get("_tries"):
+        try:
+            gone, shot = order_gone(page, number, listed_only=True)
+        except Stop:
+            raise
+        except Exception:
+            gone, shot = "", ""
+        if gone == "cancelled":
+            log("order " + number + " is under Cancelled Orders")
+            result.update({"state": "cancelled", "note": "", "screenshot": shot})
+        elif gone == "missing":
+            log("order " + number + " opens by its own address but is not in Your Orders any more")
+            result.update({"missing": True, "screenshot": shot or result.get("screenshot", "")})
+    current_job["unlisted"] = ""
+    return result
+
+
+def check_order_look(page, order):
     """Looks one placed order up on Amazon the way a person would: Your Orders, that order, Track package.
     Returns what Amazon shows: state (ordered, shipped, delivered, cancelled), the delivery estimate, the
     tracking number and carrier when shown, a short note, and a picture. The picture is only ever of a page
