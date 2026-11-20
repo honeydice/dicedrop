@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.22.2"
+VERSION = "0.22.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1307,6 +1307,7 @@ def assist(page, label, goal, finished=None, max_steps=10):
     "done" (goal reached), "stop" (the AI or a safety rule says a person is needed; reason says why),
     or "off" (the helper could not be asked)."""
     history, values, waits, refused = [], None, 0, 0
+    current_job["ai_steps"] = 0
     for step in range(1, max_steps + 1):
         try:
             if finished and finished():
@@ -1325,6 +1326,7 @@ def assist(page, label, goal, finished=None, max_steps=10):
         if answer.get("unavailable"):
             log("AI helper is not available: " + str(answer.get("reason"))[:120] + " " + str(answer.get("detail") or "")[:120])
             return "off", str(answer.get("reason") or "the AI helper is not available")
+        current_job["ai_steps"] = step
         action, why = answer.get("action"), " ".join(str(answer.get("reason") or "").split())[:240]
         item = next((i for i in items if i["n"] == answer.get("element")), None)
         log("AI step " + str(step) + ": " + str(action) + (' "' + item["words"][:50] + '"' if item and action in ("click", "type_secret") else "")
@@ -1543,6 +1545,10 @@ def verify_with_ai(page, label):
         return ""
     if outcome == "done":
         current_job["verify_ai_ok"] = True
+        if why == "the page moved on" and not current_job.get("ai_steps"):
+            # Amazon's own payment check finished before anything had to be done: say exactly that.
+            log("verify payment at checkout: Amazon's payment check passed on its own")
+            return "Amazon ran a payment check at checkout and it passed on its own"
         log("verify payment at checkout: answered with the AI helper")
         return "payment verification answered at checkout (AI helper)"
     current_job["verify_reason"] = why
