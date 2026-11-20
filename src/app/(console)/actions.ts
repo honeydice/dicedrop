@@ -342,6 +342,19 @@ export interface AccessLine {
   box: string | null;
 }
 
+/** The saved Amazon password for one account, for the operator to sign in by hand. Each view is written to the account's log. */
+export async function getAccountPassword(id: string): Promise<string | null> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return null;
+    const { data, error } = await ctx.db.rpc('dd_ops_account_password', { p_account: id });
+    if (error) return null;
+    return typeof data === 'string' && data ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The last 20 times a box opened this account: when, why, and how it went. */
 export async function getAccountLog(id: string): Promise<AccessLine[] | null> {
   try {

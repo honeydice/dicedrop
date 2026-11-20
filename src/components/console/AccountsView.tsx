@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getAccountLog, getSnapshot, requestSignin, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { getAccountLog, getAccountPassword, getSnapshot, requestSignin, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -78,6 +78,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [shot, setShot] = useState<{ label: string; taken_at: string; note: string | null; image: string } | null>(null);
   const [copied, setCopied] = useState('');
   const [logs, setLogs] = useState<{ id: string; lines: AccessLine[] | null } | null>(null);
+  const [pw, setPw] = useState<{ id: string; value: string; copied: boolean } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
     setSyncing(true);
@@ -452,9 +453,43 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     >
                       {logs?.id === a.id ? 'Hide logs' : 'Logs'}
                     </button>
+                    {a.password_set ? (
+                      <button
+                        type="button"
+                        className={btn}
+                        onClick={async () => {
+                          if (pw?.id === a.id) return setPw(null);
+                          const value = await getAccountPassword(a.id);
+                          if (value) setPw({ id: a.id, value, copied: false });
+                          else setError('The password could not be loaded. Try again.');
+                        }}
+                      >
+                        {pw?.id === a.id ? 'Hide password' : 'Show password'}
+                      </button>
+                    ) : null}
                     {a.box_online !== true ? <span className="font-mono text-xs text-muted">sign-in needs this account&apos;s vps online</span> : null}
                   </div>
 
+                  {pw?.id === a.id ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-divider bg-raised px-3 py-2">
+                      <span className="font-mono text-xs text-muted">{a.login_email}</span>
+                      <code className="min-w-0 flex-1 select-all break-all font-mono text-[14px] text-fg">{pw.value}</code>
+                      <button
+                        type="button"
+                        className={btnAccent}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(pw.value);
+                            setPw({ ...pw, copied: true });
+                          } catch {
+                            setError('Copy did not work. Press and hold the password to copy it.');
+                          }
+                        }}
+                      >
+                        {pw.copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  ) : null}
                   {logs?.id === a.id ? (
                     <div className="mt-3 overflow-hidden rounded-md border border-divider font-mono text-xs">
                       {logs.lines === null ? (
