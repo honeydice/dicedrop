@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.20.2"
+VERSION = "0.21.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -131,14 +131,14 @@ def ship_log(kind, extra=""):
 
 # ---------------------------------------------------------------- talking to DiceDrop
 
-def call(path, body=None):
+def call(path, body=None, timeout=45):
     request = urllib.request.Request(
         DD_URL + path,
         data=json.dumps(body or {}).encode(),
         headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json", "User-Agent": AGENT},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=45) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode() or "{}")
 
 
@@ -654,9 +654,18 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
                 report(label, exit_ip=exit_ip)
                 result = work(page, secrets, stage)
             finally:
+                # An order run that is stopping: one AI look at the page, so the error says in plain words what Amazon wants.
+                if sys.exc_info()[0] is not None and reason.startswith(("place order", "cart-only")) and not current_job.get("recorded_done"):
+                    try:
+                        current_job["ai_read"] = assist_read(page, label, stage[0])
+                    except Exception:
+                        current_job["ai_read"] = ""
                 shot = snap(page)
     except Stop as stop:
         error = str(stop)[:1800]
+        if current_job.get("ai_read"):
+            error = (current_job["ai_read"] + " | " + error)[:1800]
+            current_job["ai_read"] = ""
     except BaseException as failure:
         error = "While " + stage[0] + ": " + repr(failure)[:300]
         log("browser session ended unexpectedly while " + stage[0] + ": " + repr(failure)[:300])
@@ -1175,6 +1184,246 @@ CARD_KEYS = {
 }
 
 
+# ---------------------------------------------------------------- AI helper
+# When the worker meets a page it has no steps for, it shows the page to DiceDrop's AI helper and gets back one
+# action at a time: click this, type that saved detail here, wait, done, or stop with the reason.
+# The AI never receives a password or a card detail: it names which saved detail to type and the worker types it.
+# It can never press a buy button, cancel, or remove anything: those clicks are refused here, in code.
+
+AI_NEVER = NEVER_CLICK + ("cancel order", "cancel items", "cancel this", "request cancellation", "close your account", "close account",
+                          "sign out", "delete", "remove", "buy again", "buy it again", "reorder", "add to cart", "change address")
+
+ASSIST_HOSTS = ("amazon.com",)
+
+ASSIST_JS = """(start) => {
+  const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2 && getComputedStyle(e).visibility !== 'hidden'; };
+  const skip = '#navbar, #nav-belt, #nav-main, #navFooter, #rhf, footer, header';
+  const clean = (t) => (t || '').replace(/\\s+/g, ' ').trim().slice(0, 90);
+  document.querySelectorAll('[data-dd-ai]').forEach((e) => e.removeAttribute('data-dd-ai'));
+  // Anything that holds card details is shown as dots, so no picture of the page can carry them.
+  for (const e of document.querySelectorAll('input')) {
+    const about = ((e.getAttribute('autocomplete') || '') + ' ' + e.name + ' ' + e.id + ' ' + (e.getAttribute('placeholder') || '')).toLowerCase();
+    if ((e.value || '').replace(/\\D/g, '').length >= 3 && /cc-|card|cvv|cvc|security|ending in|expir/.test(about)) e.style.webkitTextSecurity = 'disc';
+    if ((e.value || '').replace(/\\D/g, '').length >= 12) e.style.webkitTextSecurity = 'disc';
+  }
+  const out = [];
+  let n = start;
+  const all = document.querySelectorAll('button, input:not([type=hidden]), select, textarea, a[href], [role=button], [role=radio], [role=link], [role=checkbox], label');
+  for (const e of all) {
+    if (out.length >= 70) break;
+    if (e.closest(skip)) continue;
+    const tag = e.tagName.toLowerCase();
+    const type = (e.getAttribute('type') || '').toLowerCase();
+    const choice = type === 'radio' || type === 'checkbox';
+    if (!shown(e) && !choice) continue;
+    const field = tag === 'select' || tag === 'textarea' || (tag === 'input' && !['submit', 'button', 'radio', 'checkbox', 'image'].includes(type));
+    let words = '';
+    let kind = '';
+    if (field) {
+      words = clean([e.getAttribute('placeholder'), e.getAttribute('aria-label'), e.labels && e.labels[0] ? e.labels[0].innerText : '', e.name, e.id].filter(Boolean).join(' | '));
+      kind = tag === 'select' ? 'dropdown' : 'field';
+    } else if (choice) {
+      const row = (e.labels && e.labels[0]) || e.closest('label, li, tr, [class*=row], [class*=option], div');
+      if (row && !shown(row) && !shown(e)) continue;
+      words = clean(row ? row.innerText : '');
+      kind = type + (e.checked ? ' (selected)' : '');
+    } else if (tag === 'label') {
+      if (!e.getAttribute('for') && !e.querySelector('input')) continue;
+      continue;  // its radio / checkbox / field is listed itself
+    } else {
+      const by = e.getAttribute('aria-labelledby');
+      words = clean(e.innerText || e.value || e.getAttribute('aria-label') || e.getAttribute('title') || (by && document.getElementById(by) ? document.getElementById(by).innerText : ''));
+      if (!words) continue;
+      kind = tag === 'a' || e.getAttribute('role') === 'link' ? 'link' : 'button';
+    }
+    e.setAttribute('data-dd-ai', String(n));
+    out.push({ n, kind, words, field, tag, about: clean((e.id || '') + ' ' + (e.name || '')).toLowerCase() });
+    n += 1;
+  }
+  return out;
+}"""
+
+
+def assist_elements(page):
+    """Numbers what can be clicked or typed into, across the page and its frames. Never reads a field's value."""
+    items, owners = [], {}
+    for frame in page.frames:
+        try:
+            found = frame.evaluate(ASSIST_JS, len(items) + 1)
+        except Exception:
+            continue
+        for item in found:
+            owners[item["n"]] = frame
+            items.append(item)
+        if len(items) >= 120:
+            break
+    return items, owners
+
+
+def assist_secrets(label):
+    """The saved details the worker may type when the AI names them. They stay on this box and go to Amazon only."""
+    import re
+
+    try:
+        card = call("/api/worker/v1/accounts/card", {"account": label})
+    except Exception:
+        return {}
+    if not card.get("saved"):
+        return {}
+    month, year = str(card.get("exp_month") or ""), str(card.get("exp_year") or "")
+    values = {
+        "card_number": re.sub(r"\D", "", str(card.get("number") or "")),
+        "card_security_code": str(card.get("cvv") or ""),
+        "card_expiry_mm_yy": (month.zfill(2) + "/" + year[-2:]) if month and year else "",
+        "card_exp_month": month,
+        "card_exp_year": year,
+        "name_on_card": str(card.get("name") or ""),
+        "billing_zip": str(card.get("zip") or ""),
+    }
+    return {name: value for name, value in values.items() if value}
+
+
+def assist_ask(page, label, goal, step, max_steps, history, names):
+    items, owners = assist_elements(page)
+    try:
+        shot = base64.b64encode(page.screenshot(type="jpeg", quality=50, full_page=False)).decode()
+    except Exception:
+        shot = ""
+    try:
+        title = page.title()[:200]
+    except Exception:
+        title = ""
+    answer = call("/api/worker/v1/assist", {
+        "account": label, "goal": goal, "step": step, "max_steps": max_steps, "history": history[-12:],
+        "url": page.url.split("?")[0][:300], "title": title, "text": page_words(page, 5000),
+        "elements": [{"n": i["n"], "kind": i["kind"], "words": i["words"]} for i in items],
+        "secrets": sorted(names), "screenshot": shot,
+    }, timeout=90)
+    return answer, items, owners
+
+
+def assist(page, label, goal, finished=None, max_steps=10):
+    """Lets the AI helper work a page the worker has no steps for. Returns (outcome, reason):
+    "done" (goal reached), "stop" (the AI or a safety rule says a person is needed; reason says why),
+    or "off" (the helper could not be asked)."""
+    history, values, waits, refused = [], None, 0, 0
+    for step in range(1, max_steps + 1):
+        try:
+            if finished and finished():
+                return "done", "the page moved on"
+            host = page.url.split("/")[2].lower() if "://" in page.url else ""
+            if not any(host == allowed or host.endswith("." + allowed) for allowed in ASSIST_HOSTS):
+                return "stop", "the page left Amazon (" + host[:40] + ")"
+            if values is None:
+                values = assist_secrets(label)
+            answer, items, owners = assist_ask(page, label, goal, step, max_steps, history, values.keys())
+        except Stop:
+            raise
+        except Exception as failure:
+            log("AI helper could not be asked: " + str(failure)[:160])
+            return "off", "the AI helper could not be reached"
+        if answer.get("unavailable"):
+            log("AI helper is not available: " + str(answer.get("reason"))[:120] + " " + str(answer.get("detail") or "")[:120])
+            return "off", str(answer.get("reason") or "the AI helper is not available")
+        action, why = answer.get("action"), " ".join(str(answer.get("reason") or "").split())[:240]
+        item = next((i for i in items if i["n"] == answer.get("element")), None)
+        log("AI step " + str(step) + ": " + str(action) + (' "' + item["words"][:50] + '"' if item and action in ("click", "type_secret") else "")
+            + (" [" + str(answer.get("secret")) + "]" if action == "type_secret" else "") + " - " + why + " (page: " + str(answer.get("page_is") or "")[:90] + ")")
+        if action == "done":
+            if finished and not finished():
+                history.append("you said done, but the worker's own check shows the goal is not reached yet")
+                continue
+            return "done", why
+        if action == "stop":
+            return "stop", why or "the AI helper stopped without a reason"
+        if action == "wait":
+            waits += 1
+            if waits > 3:
+                return "stop", "the page did not change"
+            time.sleep(4)
+            history.append("waited 4 seconds")
+            continue
+        if item is None:
+            history.append("element " + str(answer.get("element")) + " is not on the page; pick a number from the list")
+            continue
+        target = owners[item["n"]].locator('[data-dd-ai="' + str(item["n"]) + '"]').first
+        described = (item["words"] + " " + item.get("about", "")).lower()
+        try:
+            if action == "click":
+                if any(word in described for word in AI_NEVER):
+                    refused += 1
+                    log("AI helper: refused to click \"" + item["words"][:50] + "\"")
+                    if refused >= 2:
+                        return "stop", "the only way forward was a button the worker never presses (" + item["words"][:40] + ")"
+                    history.append('REFUSED: the worker never clicks "' + item["words"][:50] + '". Choose something else or stop.')
+                    continue
+                try:
+                    if item["kind"].startswith(("radio", "checkbox")):
+                        target.check(timeout=6000, force=True)
+                    else:
+                        target.click(timeout=8000)
+                except Exception:
+                    target.click(timeout=6000, force=True)
+                history.append('clicked ' + item["kind"] + ' "' + item["words"][:60] + '"')
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=20000)
+                except Exception:
+                    pass
+                pause(2.0, 3.5)
+            elif action == "type_secret":
+                name = answer.get("secret")
+                if name not in values:
+                    history.append("that saved detail does not exist; the ones that do: " + (", ".join(sorted(values)) or "none"))
+                    continue
+                if not item.get("field"):
+                    history.append('"' + item["words"][:50] + '" is not something that can be typed into')
+                    continue
+                if item.get("tag") == "select":
+                    value = values[name]
+                    for option in [value, value.lstrip("0"), value[-2:]]:
+                        try:
+                            target.select_option(option, timeout=3000)
+                            break
+                        except Exception:
+                            continue
+                else:
+                    target.click(timeout=6000)
+                    pause(0.2, 0.5)
+                    target.fill("")
+                    target.press_sequentially(values[name], delay=random.randint(60, 110))
+                    try:
+                        target.evaluate("e => { e.style.webkitTextSecurity = 'disc'; }")
+                    except Exception:
+                        pass
+                history.append("typed the saved " + name + ' into "' + item["words"][:50] + '"')
+                pause(0.5, 1.0)
+        except Stop:
+            raise
+        except Exception as failure:
+            history.append("that did not work: " + str(failure).split("\n")[0][:120])
+    return "stop", "not finished after " + str(max_steps) + " steps"
+
+
+def assist_read(page, label, doing):
+    """One look, no actions: the AI says in a plain sentence what the page is asking for. For error reports."""
+    try:
+        answer, _, _ = assist_ask(page, label, "READ ONLY. Do not click or type anything. The worker stopped while " + str(doing)[:80]
+                                  + ". Answer with the action stop, and as the reason one short plain sentence saying what this page is asking for or why the order cannot continue.", 1, 1, [], [])
+        if answer.get("unavailable"):
+            return ""
+        return " ".join(str(answer.get("reason") or "").split())[:240]
+    except Exception:
+        return ""
+
+
+GOAL_VERIFY_CHECKOUT = ("Amazon stopped the checkout on a payment verification page right after the order was submitted. Get past it so the payment is confirmed: "
+                        "for example choose the card on file, type the card number or security code again where Amazon asks, and press the button that verifies or continues. "
+                        "The goal is reached when Amazon shows the order confirmation (thank you) page. If Amazon wants identity confirmed in a way the worker cannot do, stop.")
+GOAL_VERIFY_ORDER = ("This placed order shows a notice that the bank requires verification of the card. Answer it: press Verify payment, choose the card on file, "
+                     "type its card number again where asked, press Verify card, and accept any step that keeps the same payment method. "
+                     "The goal is reached when Amazon confirms the card was verified or returns to the order. Never place a new order.")
+
+
 def verify_payment(page, label):
     """Amazon's "Verify payment" page asks to confirm the card. Look through the page and its frames for the
     fields it shows, fill the ones this account has saved card details for, and submit once.
@@ -1217,6 +1466,9 @@ def verify_payment(page, label):
         except Exception:
             current_job["verify_shot"] = ""
         log("verify payment at checkout: nothing to fill in. frames: " + ", ".join(sorted({f.url.split("?")[0][-70:] for f in page.frames}))[:600])
+        helped = verify_with_ai(page, label)
+        if helped:
+            return helped
         return "Amazon asked to verify the payment, but showed no fields to fill in (it may want an approval from the bank or card app)"
 
     card = call("/api/worker/v1/accounts/card", {"account": label})
@@ -1259,6 +1511,9 @@ def verify_payment(page, label):
         except Exception:
             continue
     if not filled:
+        helped = verify_with_ai(page, label)
+        if helped:
+            return helped
         return "Amazon asked to verify the payment with fields the worker does not recognize yet"
     pause(0.6, 1.2)
     sent = False
@@ -1278,6 +1533,24 @@ def verify_payment(page, label):
         except Exception:
             pass
     return "payment verified with the saved card (" + ", ".join(filled) + ")" + ("" if sent else ", but no button to send it was found")
+
+
+def verify_with_ai(page, label):
+    """The checkout verification page has nothing the worker's own steps recognize: let the AI helper work it.
+    Returns the note for the order, or "" when the helper could not be asked."""
+    outcome, why = assist(page, label, GOAL_VERIFY_CHECKOUT, finished=lambda: "/cpe/" not in page.url.lower())
+    if outcome == "off":
+        return ""
+    if outcome == "done":
+        current_job["verify_ai_ok"] = True
+        log("verify payment at checkout: answered with the AI helper")
+        return "payment verification answered at checkout (AI helper)"
+    current_job["verify_reason"] = why
+    try:
+        current_job["verify_shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
+    except Exception:
+        pass
+    return "Amazon asked to verify the payment: " + why
 
 
 ORDER_NUMBER = r"\b\d{3}-\d{7}-\d{7}\b"
@@ -1727,6 +2000,36 @@ def frames_summary(page):
 
 
 def resolve_verify(page, number, label):
+    """The worker's own steps first; when they do not get through, the AI helper works the same pages."""
+    verified, why = resolve_verify_steps(page, number, label)
+    if verified or why in ("the order page did not load", "no verification is being asked for"):
+        return verified, why
+    try:
+        page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        if not order_page_ok(page, number):
+            return False, why
+        if not needs_verify(page_words(page, 6000)):
+            return True, "payment verified"
+        outcome, said = assist(page, label, GOAL_VERIFY_ORDER + " The order number is " + number + ".")
+        if outcome == "off":
+            return False, why
+        if outcome == "stop":
+            return False, said
+        time.sleep(4)
+        page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        if order_page_ok(page, number) and not needs_verify(page_words(page, 6000)):
+            return True, "payment verified (AI helper)"
+        return False, "Amazon still asks to verify the payment"
+    except Stop:
+        raise
+    except Exception as failure:
+        log("verify payment with the AI helper could not be completed: " + str(failure)[:200])
+        return False, why
+
+
+def resolve_verify_steps(page, number, label):
     """Answers Amazon's "Verify payment" on a placed order, the way a person does:
     order page -> Verify payment -> pick the card on file -> re-enter its number -> Verify card.
     Uses the card details saved on the account. Returns (verified, short note). The card number is typed
@@ -2083,13 +2386,13 @@ def cart_only_job(job):
                         log("after ordering: could not look at the order: " + str(failure)[:200])
                 if not seen.get("delivery_estimate") and current_job.get("thankyou_estimate"):
                     seen["delivery_estimate"] = current_job["thankyou_estimate"]
-                if current_job.get("verify_note") and seen.get("state") == "ordered" and not seen.get("verified"):
+                if current_job.get("verify_note") and seen.get("state") == "ordered" and not seen.get("verified") and not current_job.get("verify_ai_ok"):
                     # Amazon or the bank asked to confirm the payment during checkout and it was not answered.
                     # The order exists, but Amazon cancels these if the payment is not confirmed: say so now.
                     seen["state"] = "verify"
                     seen["note"] = "Verify Payment"
                     seen["attempted"] = False
-                    seen["verify_detail"] = "the bank asked to confirm this payment at checkout; Amazon cancels the order if it is not confirmed"
+                    seen["verify_detail"] = current_job.get("verify_reason") or "the bank asked to confirm this payment at checkout; Amazon cancels the order if it is not confirmed"
                     if current_job.get("verify_shot"):
                         seen["screenshot"] = current_job["verify_shot"]
                 current_job["shot"] = seen.get("screenshot", "")
@@ -2126,6 +2429,9 @@ def cart_only_job(job):
         ship_log("job", "run " + str(job.get("order_number")) + " (" + str(job.get("run_kind")) + ")")
         current_job["shot"] = ""
         current_job["verify_note"] = ""
+        current_job["verify_ai_ok"] = False
+        current_job["verify_reason"] = ""
+        current_job["ai_read"] = ""
         current_job["verify_shot"] = ""
         current_job["verify_seen"] = ""
         current_job["whole_page"] = False
