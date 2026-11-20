@@ -18,6 +18,8 @@ function startingForm(a: OpsAccount | null): AccountForm {
   return {
     label: a?.label ?? '',
     login_email: a?.login_email ?? '',
+    engine: a ? (a.engine ?? 'kameleo') : 'multilogin',
+    mlx_profile: a?.mlx_profile ?? '',
     password: '',
     billing_name: a?.billing_name ?? '',
     billing_zip: a?.billing_zip ?? '',
@@ -57,6 +59,8 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
   const [error, setError] = useState('');
   const set = (p: Partial<AccountForm>) => setForm((f) => ({ ...f, ...p }));
   const editing = account !== null;
+  // New accounts run in Multilogin. Only an account already on Kameleo keeps its proxy picker.
+  const usesKameleo = account?.engine === 'kameleo';
   const [proxies, setProxies] = useState<OpsProxy[] | null>(null);
   const BLANK_CARD: CardDetails = { number: '', exp_month: '', exp_year: '', cvv: '', name: '', zip: '' };
   const [card, setCard] = useState<CardDetails>(BLANK_CARD);
@@ -123,6 +127,11 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
     if (!form.label.trim()) {
       setTab('details');
       setError('Add a label first.');
+      return;
+    }
+    if (!usesKameleo && !form.mlx_profile.trim()) {
+      setTab('details');
+      setError('Add the Multilogin profile name: the name of this account\'s browser in Multilogin.');
       return;
     }
     setBusy(true);
@@ -217,6 +226,14 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                   </label>
                   <input id="am-email" type="email" autoComplete="off" placeholder="buyer01@yourdomain.com (can be added later)" value={form.login_email} onChange={(e) => set({ login_email: e.target.value })} className={field} />
                 </div>
+                {!usesKameleo ? (
+                  <div>
+                    <label htmlFor="am-mlx" className={label}>
+                      Multilogin profile name
+                    </label>
+                    <input id="am-mlx" autoComplete="off" placeholder="Exactly as it shows in Multilogin" value={form.mlx_profile} onChange={(e) => set({ mlx_profile: e.target.value })} className={field} />
+                  </div>
+                ) : null}
                 <div>
                   <label htmlFor="am-pass" className={label}>
                     Password
@@ -385,6 +402,7 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                     ))}
                   </select>
                 </div>
+                {usesKameleo ? (
                 <div className="sm:col-span-2">
                   <div className="mb-1.5 flex items-baseline justify-between">
                     <span id="am-proxy-label" className="text-[13px] font-medium text-soft">
@@ -414,6 +432,7 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
                     })}
                   </div>
                 </div>
+                ) : null}
                 <fieldset className="sm:col-span-2">
                   <legend className={label}>Access</legend>
                   <div className="grid grid-cols-2 gap-2">

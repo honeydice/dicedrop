@@ -471,7 +471,6 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         {isWarming(a) ? <option value="warm:0">Turn warm-up off</option> : null}
                       </optgroup>
                       <optgroup label={a.engine === 'multilogin' ? 'Browser: Multilogin' : 'Browser: Kameleo'}>
-                        {a.engine === 'multilogin' ? <option value="kameleo">Switch to Kameleo</option> : null}
                         <option value="multilogin">{a.engine === 'multilogin' ? 'Change Multilogin profile' : 'Switch to Multilogin'}</option>
                       </optgroup>
                       <optgroup label="Account">

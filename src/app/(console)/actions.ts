@@ -274,6 +274,10 @@ export async function updateAccount(id: string, patch: AccountPatch): Promise<Re
 export interface AccountForm {
   label: string;
   login_email: string;
+  /** 'multilogin' for every new account; 'kameleo' only on an account that already runs there. */
+  engine: string;
+  /** The name (or id) of the account's browser profile in Multilogin. */
+  mlx_profile: string;
   password: string;
   billing_name: string;
   billing_zip: string;
@@ -310,7 +314,12 @@ export async function saveAccount(id: string | null, input: AccountForm): Promis
     const { data, error } = await ctx.db.rpc('dd_ops_save_account', { p_id: id, p: { ...input, supplier: 'amazon', region: 'US' } });
     if (error) return done(error, 'That label is already in use.');
     const savedId = (data as { id?: string } | null)?.id ?? id;
-    if (savedId) {
+    if (savedId && input.engine !== 'kameleo') {
+      if (!input.mlx_profile.trim()) return { ok: false, error: 'The account was saved, but it has no Multilogin profile name yet.' };
+      const { error: engineError } = await ctx.db.rpc('dd_ops_set_engine', { p_account: savedId, p_engine: 'multilogin', p_profile: input.mlx_profile.trim() });
+      if (engineError) return { ok: false, error: `The account was saved, but the Multilogin profile was not linked. ${engineError.message}` };
+    }
+    if (savedId && input.engine === 'kameleo') {
       const { error: proxyError } = await ctx.db.rpc('dd_ops_set_account_proxy', { p_account: savedId, p_proxy: input.proxy_id || null });
       if (proxyError) return { ok: false, error: `The account was saved, but the proxy was not attached. ${proxyError.message}` };
     }

@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.28.5"
+VERSION = "0.29.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
