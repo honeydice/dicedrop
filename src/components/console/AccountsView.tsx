@@ -208,7 +208,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
         <Tile label="Orders today" value={`${ordersToday} / ${capacity}`} hint="placed against total daily capacity" />
       </section>
 
-      <div role="tablist" aria-label="Account filter" className="mb-4 flex flex-wrap gap-1 border-b border-line">
+      <div role="tablist" aria-label="Account filter" className="-mx-3 mb-4 flex gap-1 overflow-x-auto border-b border-line px-3 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
         {(['all', 'ready', 'attention', 'paused', 'unassigned'] as Filter[]).map((f) => (
           <button
             key={f}
@@ -216,7 +216,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             role="tab"
             aria-selected={filter === f}
             onClick={() => setFilter(f)}
-            className="-mb-px inline-flex min-h-[44px] items-center gap-2 border-b-2 bg-transparent px-3.5 text-sm font-medium capitalize"
+            className="-mb-px inline-flex min-h-[44px] shrink-0 items-center gap-2 border-b-2 bg-transparent px-3 text-sm font-medium capitalize sm:px-3.5"
             style={{ borderBottomColor: filter === f ? 'rgb(var(--accent))' : 'transparent', color: filter === f ? 'rgb(var(--strong))' : 'rgb(var(--muted))' }}
           >
             {f === 'attention' ? 'Needs attention' : f}
@@ -254,30 +254,30 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           const st = signIn(a);
           return (
             <div key={a.id} className="border-b border-divider last:border-b-0">
-              <div className="flex items-center gap-2 pr-4">
+              <div className="flex flex-wrap items-center gap-x-2 sm:flex-nowrap sm:pr-4">
                 <button
                   type="button"
                   aria-expanded={isOpen}
                   onClick={() => setOpen(isOpen ? '' : a.id)}
-                  className="flex min-h-[48px] min-w-0 flex-1 items-center gap-6 bg-transparent py-2 pl-12 pr-2 text-left hover:bg-raised/60"
+                  className="flex min-h-[48px] min-w-0 flex-1 basis-full items-center gap-3 bg-transparent py-2 pl-4 pr-3 text-left hover:bg-raised/60 sm:basis-auto sm:gap-6 sm:pl-12 sm:pr-2"
                 >
-                  <span className="flex w-[240px] shrink-0 items-center gap-3">
+                  <span className="flex min-w-0 flex-1 items-center gap-3 sm:w-[240px] sm:flex-none sm:shrink-0">
                     <Dot color={st.color} />
                     <span className="font-mono text-[13px] font-medium text-fg">{a.label}</span>
                     <span className="font-mono text-xs" style={{ color: st.color }}>
                       {st.text}
                     </span>
                   </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
+                  <span className="hidden min-w-0 flex-1 truncate font-mono text-xs text-muted sm:block">
                     {[a.login_email, a.box_name ?? 'no vps', a.visibility === 'private' ? `private · ${a.allowed_names.join(', ') || 'no clients'}` : 'public'].filter(Boolean).join('  ·  ')}
                     {a.last_error ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
                     {a.current_order ? <span className="ml-3">placing {a.current_order}</span> : null}
                   </span>
-                  <span className="w-[110px] shrink-0 whitespace-nowrap text-right font-mono text-xs" style={{ color: full ? TONE.warn : 'rgb(var(--muted))' }}>
+                  <span className="shrink-0 whitespace-nowrap text-right font-mono text-xs sm:w-[110px]" style={{ color: full ? TONE.warn : 'rgb(var(--muted))' }}>
                     {a.orders_today} / {a.daily_order_cap} today
                   </span>
                 </button>
-                <div className="flex w-[172px] shrink-0 items-center justify-end gap-1.5">
+                <div className="flex w-full shrink-0 items-center justify-start gap-1.5 pb-2.5 pl-[38px] sm:w-[172px] sm:justify-end sm:pb-0 sm:pl-0">
                   {a.totp_enabled ? (
                     <>
                       <button
@@ -319,7 +319,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </div>
 
               {isOpen ? (
-                <div className="border-t border-divider bg-raised/30 px-6 py-5">
+                <div className="border-t border-divider bg-raised/30 px-3 py-4 sm:px-6 sm:py-5">
                   <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
                     <Panel title="vps">
                       <div className="flex items-center gap-3">

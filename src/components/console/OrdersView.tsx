@@ -167,12 +167,12 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   return (
     <>
       <PageHead title="Orders" hint={`${rows.length} shown of ${data.total_orders}${data.total_orders > data.orders.length ? ` (latest ${data.orders.length} loaded)` : ''}`}>
-        <div className="flex w-full max-w-[640px] flex-1 flex-wrap items-center gap-3">
+        <div className="flex w-full max-w-[640px] flex-1 flex-wrap items-center gap-2 sm:gap-3">
           <span className="inline-flex items-center gap-2 text-[13px] font-medium" style={{ color: live ? 'rgb(var(--good))' : 'rgb(var(--muted))' }}>
             <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full" style={{ background: live ? 'rgb(var(--good))' : 'rgb(var(--muted))' }} />
             {live ? 'Live' : 'Connecting'}
           </span>
-          <div className="basis-44">
+          <div className="flex-1 basis-32 sm:flex-none sm:basis-44">
             <label htmlFor="client-filter" className="sr-only">
               Client
             </label>
@@ -185,7 +185,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
               ))}
             </select>
           </div>
-          <div className="flex-1 basis-56">
+          <div className="basis-full sm:flex-1 sm:basis-56">
             <label htmlFor="order-search" className="sr-only">
               Search orders
             </label>
@@ -194,21 +194,21 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search order #, buyer, account, box, or title"
+              placeholder="Search orders"
               className={field}
             />
           </div>
         </div>
       </PageHead>
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button type="button" className={btn} onClick={() => setTestOpen(!testOpen)}>
           {testOpen ? 'Close test order' : 'New test order'}
         </button>
         <button
           type="button"
           disabled={busy === 'check'}
-          className={`${btn} ml-2`}
+          className={btn}
           onClick={async () => {
             const n = await rpc('check', 'dd_ops_check_orders_now', {});
             if (n !== null) setChecked(typeof n === 'number' && n > 0 ? `checking ${n} account${n === 1 ? '' : 's'} on Amazon now` : 'no placed orders are waiting on Amazon');
@@ -216,7 +216,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
         >
           Check Amazon now
         </button>
-        {checked ? <span className="ml-3 font-mono text-xs text-muted">{checked}</span> : null}
+        {checked ? <span className="basis-full font-mono text-xs text-muted sm:basis-auto">{checked}</span> : null}
       </div>
 
       {testOpen ? (
@@ -306,7 +306,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
 
       <ErrorNote message={error} />
 
-      <div role="tablist" aria-label="Order status" className="mb-4 flex flex-wrap gap-1 border-b border-line">
+      <div role="tablist" aria-label="Order status" className="-mx-3 mb-4 flex gap-1 overflow-x-auto border-b border-line px-3 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
         {TABS.map((t) => {
           const selected = tab === t.id;
           const count = searched.filter((o) => t.id === 'all' || o.status === t.id).length;
@@ -317,7 +317,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
               role="tab"
               aria-selected={selected}
               onClick={() => setTab(t.id)}
-              className="-mb-px inline-flex min-h-[44px] items-center gap-2 border-b-2 bg-transparent px-3.5 text-sm font-medium"
+              className="-mb-px inline-flex min-h-[44px] shrink-0 items-center gap-2 border-b-2 bg-transparent px-3 text-sm font-medium sm:px-3.5"
               style={{ borderBottomColor: selected ? 'rgb(var(--accent))' : 'transparent', color: selected ? 'rgb(var(--strong))' : 'rgb(var(--muted))' }}
             >
               <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full" style={{ background: t.dot }} />
@@ -362,18 +362,18 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 type="button"
                 aria-expanded={isOpen}
                 onClick={() => setOpen(isOpen ? '' : o.id)}
-                className="flex min-h-[38px] w-full items-center gap-3 bg-transparent px-4 py-1.5 text-left font-mono text-xs hover:bg-raised/60"
+                className="flex min-h-[38px] w-full flex-wrap items-center gap-x-3 gap-y-1 bg-transparent px-3 py-2 text-left font-mono text-xs hover:bg-raised/60 sm:flex-nowrap sm:px-4 sm:py-1.5"
               >
-                <span className="w-[82px] shrink-0 rounded px-2 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide" style={{ background: pill.bg, color: pill.fg }}>
+                <span className="w-[78px] shrink-0 rounded px-1.5 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide sm:w-[82px] sm:px-2" style={{ background: pill.bg, color: pill.fg }}>
                   {o.status}
                 </span>
                 <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
-                <span className="w-[150px] shrink-0 truncate text-fg">{o.order_number}</span>
+                <span className="hidden w-[150px] shrink-0 truncate text-fg sm:block">{o.order_number}</span>
                 <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
                 <span className="hidden w-[160px] shrink-0 truncate text-soft sm:block" title={o.ship_name ?? o.buyer_name ?? ''}>
                   {shortName(o.ship_name ?? o.buyer_name ?? '')}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-muted" title={o.title ?? o.asin ?? ''}>
+                <span className="hidden min-w-0 flex-1 truncate text-muted sm:block" title={o.title ?? o.asin ?? ''}>
                   {shortTitle(o.title ?? o.asin ?? 'Untitled item')}
                   {o.quantity > 1 ? ` ×${o.quantity}` : ''}
                   {o.stuck ? <span className="ml-2 text-warn">· stuck</span> : null}
@@ -392,16 +392,28 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 <span className="hidden w-[90px] shrink-0 text-right tabular-nums text-muted lg:block">
                   fees <span className="text-fg">{money(fees)}</span>
                 </span>
-                <span className="w-[104px] shrink-0 text-right tabular-nums text-muted">
-                  total <span className="font-semibold text-fg">{money(total)}</span>
+                <span className="ml-auto shrink-0 text-right tabular-nums text-muted sm:ml-0 sm:w-[104px]">
+                  <span className="hidden sm:inline">total </span>
+                  <span className="font-semibold text-fg">{money(total)}</span>
                 </span>
-                <span className="w-[62px] shrink-0 text-right tabular-nums text-muted">{now ? timeAgo(o.updated_at, now) : ' '}</span>
+                <span className="w-[50px] shrink-0 text-right tabular-nums text-muted sm:w-[62px]">{now ? timeAgo(o.updated_at, now) : ' '}</span>
+                <span className="basis-full truncate text-soft sm:hidden">
+                  {shortName(o.ship_name ?? o.buyer_name ?? '')}
+                  <span className="text-muted"> · {shortTitle(o.title ?? o.asin ?? 'Untitled item')}{o.quantity > 1 ? ` ×${o.quantity}` : ''}</span>
+                </span>
+                {note || o.stuck ? (
+                  <span className="basis-full truncate text-[12px] font-semibold sm:hidden" style={{ color: o.status === 'issue' ? '#ef4444' : look.fg }}>
+                    {note}
+                    {o.stuck ? <span className="text-warn">{note ? ' · ' : ''}stuck</span> : null}
+                  </span>
+                ) : null}
               </button>
 
               {isOpen ? (
-                <div className="border-t border-divider px-5 pb-4 pl-[46px] pt-3">
-                  <dl className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-6 gap-y-2 font-mono text-xs">
+                <div className="border-t border-divider px-3 pb-4 pt-3 sm:px-5 sm:pl-[46px]">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-xs sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] sm:gap-x-6">
                     {[
+                      ['order', o.order_number],
                       ['client', o.client_name],
                       ['amazon_order', o.amazon_order_id ?? 'pending'],
                       ['account', o.account_label ?? 'unassigned'],

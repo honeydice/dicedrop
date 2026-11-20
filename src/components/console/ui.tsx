@@ -13,9 +13,9 @@ export const td = 'px-3 py-2.5 align-middle';
 
 export function PageHead({ title, hint, children }: { title: string; hint?: string; children?: ReactNode }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3 sm:mb-5 sm:gap-4">
       <div>
-        <h1 className="font-display text-[28px] font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-display text-[24px] font-semibold tracking-tight sm:text-[28px]">{title}</h1>
         {hint ? <p className="mt-1 text-[13px] text-muted">{hint}</p> : null}
       </div>
       {children}
@@ -27,7 +27,7 @@ export function Card({ title, right, children }: { title?: string; right?: React
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-panel">
       {title ? (
-        <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-4 py-2.5 sm:px-5 sm:py-3">
           <div className="font-mono text-[13px] text-muted">{title}</div>
           {right}
         </div>
@@ -41,9 +41,9 @@ export function Tile({ label: l, value, hint, tone }: { label: string; value: st
   const color =
     tone === 'good' ? 'text-good' : tone === 'bad' ? 'text-bad' : tone === 'warn' ? 'text-warn' : tone === 'accent' ? 'text-accent' : '';
   return (
-    <div className="flex-1 basis-44 rounded-xl border border-line bg-panel px-5 py-4">
-      <div className="text-xs font-medium uppercase tracking-wider text-muted">{l}</div>
-      <div className={`mt-1.5 font-display text-3xl font-semibold tracking-tight ${color}`}>{value}</div>
+    <div className="flex-1 basis-[calc(50%-0.5rem)] rounded-xl border border-line bg-panel px-4 py-3 sm:basis-44 sm:px-5 sm:py-4">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-muted sm:text-xs">{l}</div>
+      <div className={`mt-1 font-display text-2xl font-semibold tracking-tight sm:mt-1.5 sm:text-3xl ${color}`}>{value}</div>
       {hint ? <div className="mt-1 text-xs text-muted">{hint}</div> : null}
     </div>
   );

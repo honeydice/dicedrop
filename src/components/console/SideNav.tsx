@@ -15,7 +15,7 @@ const ITEMS = [
 export function SideNav() {
   const path = usePathname();
   return (
-    <nav aria-label="Console" className="flex flex-row flex-wrap gap-1 md:flex-col">
+    <nav aria-label="Console" className="-mx-3 flex flex-row gap-1 overflow-x-auto px-3 [scrollbar-width:none] md:mx-0 md:flex-col md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
       {ITEMS.map((item) => {
         const active = item.href === '/' ? path === '/' : path.startsWith(item.href);
         return (
@@ -23,11 +23,11 @@ export function SideNav() {
             key={item.href}
             href={item.href}
             aria-current={active ? 'page' : undefined}
-            className={`flex min-h-[44px] items-center rounded-lg px-3.5 font-mono text-[14px] no-underline ${
+            className={`flex min-h-[40px] shrink-0 items-center rounded-lg px-3 font-mono text-[14px] no-underline md:min-h-[44px] md:px-3.5 ${
               active ? 'bg-raised text-strong' : 'text-muted hover:bg-raised/60 hover:text-strong'
             }`}
           >
-            <span aria-hidden="true" className={`mr-2.5 inline-block h-1.5 w-1.5 rounded-full ${active ? 'bg-accent' : 'bg-transparent'}`} />
+            <span aria-hidden="true" className={`mr-2 inline-block h-1.5 w-1.5 rounded-full md:mr-2.5 ${active ? 'bg-accent' : 'hidden bg-transparent md:inline-block'}`} />
             {item.label.toLowerCase()}
           </Link>
         );
