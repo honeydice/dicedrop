@@ -85,6 +85,31 @@ export async function createKey(clientId: string, name: string, webhookUrl: stri
   }
 }
 
+/** A fresh API key for an existing key entry. The webhook URL and signing secret stay as they are; the old key stops working. */
+export async function rotateKey(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const key = 'dd_live_' + randomBytes(32).toString('base64url');
+    const { error } = await ctx.db.from('api_keys').update({ key_prefix: key.slice(0, 14), key_hash: sha256(key) }).eq('id', id).is('revoked_at', null);
+    if (error) return done(error);
+    return { ok: true, error: '', secret: key };
+  } catch {
+    return FAILED;
+  }
+}
+
+export async function setClientAutoOrder(clientId: string, on: boolean): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_client_auto_order', { p_client: clientId, p_on: on });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 export async function revokeKey(id: string): Promise<Result> {
   try {
     const ctx = await operatorDb();

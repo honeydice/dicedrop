@@ -170,6 +170,7 @@ export default function DocsPage() {
             ['quantity', 'Optional, default 1.'],
             ['line_id', 'Optional. Set it when one order has several items; each item is its own DiceDrop order.'],
             ['gift', 'Optional. { message, from } marks the order as a gift with that note.'],
+            ['auto_order', 'Optional, true or false. When true (and switched on for your account) the order is bought automatically after delay_seconds (default 60). Cancel inside that window with POST /orders/{id}/cancel. Sending the same order again with auto_order after an issue or a cancel puts that same order back in the queue: one order, one DiceDrop number.'],
             ['store_code, title, photo_url, buyer, sale_price, sale_fees, est_cost, ship_by, metadata', 'Optional. Stored on the order and sent back to you.'],
           ]}
         />

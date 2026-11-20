@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { createClientRecord, createKey, getPulseLog, getSigningSecret, resendPulse, revokeKey, sendTestPulse, setClientStatus, setKeyWebhook, type PulseLine, type Result } from '@/app/(console)/actions';
+import { createClientRecord, createKey, getPulseLog, getSigningSecret, resendPulse, revokeKey, rotateKey, sendTestPulse, setClientAutoOrder, setClientStatus, setKeyWebhook, type PulseLine, type Result } from '@/app/(console)/actions';
 import { money, timeAgo } from '@/lib/format';
 import type { OpsClient } from '@/lib/types';
 import { Badge, btn, btnAccent, btnDanger, Card, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
@@ -151,6 +151,15 @@ const { order } = await res.json();   // order.id, order.status
                 </button>
                 <button
                   type="button"
+                  disabled={busy}
+                  className={c.auto_order ? btnAccent : btn}
+                  title="When on, this client can send orders that are bought automatically after a short delay."
+                  onClick={() => void run(() => setClientAutoOrder(c.id, !c.auto_order))}
+                >
+                  {c.auto_order ? 'Auto-order on' : 'Auto-order off'}
+                </button>
+                <button
+                  type="button"
                   className={btn}
                   onClick={() => {
                     setKeyFor(keyFor === c.id ? '' : c.id);
@@ -210,8 +219,12 @@ const { order } = await res.json();   // order.id, order.status
                 <div className="font-medium">Key created: {reveal.keyName}. Copy it now; it is shown only once.</div>
                 <div className="mt-3 text-xs uppercase tracking-wider text-muted">API key</div>
                 <code className="mt-1 block break-all font-mono text-[13px] text-accent">{reveal.key}</code>
-                <div className="mt-3 text-xs uppercase tracking-wider text-muted">Webhook signing secret</div>
-                <code className="mt-1 block break-all font-mono text-[13px] text-soft">{reveal.secret}</code>
+                {reveal.secret ? (
+                  <>
+                    <div className="mt-3 text-xs uppercase tracking-wider text-muted">Webhook signing secret</div>
+                    <code className="mt-1 block break-all font-mono text-[13px] text-soft">{reveal.secret}</code>
+                  </>
+                ) : null}
                 <button type="button" className={`${btn} mt-4`} onClick={() => setReveal(null)}>
                   I have copied it
                 </button>
@@ -260,6 +273,19 @@ const { order } = await res.json();   // order.id, order.status
                         }}
                       >
                         {shown?.id === k.id ? 'Hide secret' : 'Signing secret'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className={btn}
+                        title="Makes a new API key for this entry. The old key stops working; the webhook and signing secret stay."
+                        onClick={async () => {
+                          if (!window.confirm(`Make a new API key for "${k.name}"? The current key stops working right away.`)) return;
+                          const result = await run(() => rotateKey(k.id));
+                          if (result?.ok && result.secret) setReveal({ clientId: c.id, keyName: k.name, key: result.secret, secret: '' });
+                        }}
+                      >
+                        New key value
                       </button>
                       {k.webhook_url ? (
                         <button

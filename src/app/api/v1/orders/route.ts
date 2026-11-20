@@ -104,13 +104,16 @@ export async function POST(req: Request) {
       gift: giftOn ? 'true' : 'false',
       gift_message: giftMessage,
       gift_from: giftFrom,
+      // auto_order: buy it without an operator click, after delay_seconds (default 60) in which it can still be cancelled.
+      auto_order: body.auto_order === true || body.auto_order === 'true' ? 'true' : 'false',
+      delay_seconds: num(body.delay_seconds),
     };
 
     const { data, error } = await auth.db.rpc('dd_api_create_order', { p_key: auth.key, p_order: order });
     if (error) return fromDbError(error);
 
     const duplicate = Boolean(data?.duplicate);
-    return NextResponse.json({ order: publicOrder(data.order), duplicate }, { status: duplicate ? 200 : 201 });
+    return NextResponse.json({ order: publicOrder(data.order), duplicate, requeued: Boolean(data?.requeued) }, { status: duplicate ? 200 : 201 });
   } catch {
     return apiError(500, 'server_error', 'Something went wrong. Nothing was placed.');
   }

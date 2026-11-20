@@ -64,6 +64,7 @@ export function publicOrder(o: any) {
     id: o.id,
     status: o.status,
     cancel_requested: o.cancel_requested,
+    auto_order_at: o.auto_order_at ?? null,
     source: o.source,
     order_number: o.order_number,
     line_id: o.line_id,

@@ -353,7 +353,9 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                     ? (o.issue_reason ?? '')
                     : o.status === 'ordering' || o.status === 'held'
                       ? (o.run_note ?? '')
-                      : '';
+                      : o.status === 'pending' && o.auto_order_at
+                        ? (now && new Date(o.auto_order_at).getTime() > now ? `Auto-order in ${Math.max(1, Math.ceil((new Date(o.auto_order_at).getTime() - now) / 1000))}s` : 'Auto-order · waiting for an account')
+                        : '';
           return (
             <div key={o.id} className="border-b border-divider last:border-b-0" style={fresh ? { background: look.bg } : undefined}>
               <button

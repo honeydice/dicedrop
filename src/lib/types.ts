@@ -16,6 +16,7 @@ export interface Named {
 export interface OpsOrder {
   id: string;
   dd_number: string;
+  auto_order_at: string | null;
   run_requested_at: string | null;
   run_kind: string | null;
   run_note: string | null;
@@ -122,6 +123,7 @@ export interface OpsKey {
 export interface OpsClient {
   id: string;
   name: string;
+  auto_order: boolean;
   status: 'active' | 'paused';
   created_at: string;
   orders_total: number;
