@@ -477,6 +477,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                           ['orders all time', String(a.orders_total)],
                           ['sign-in', sessionLabel(a.session_state)],
                           ['outgoing ip', a.exit_ip ?? 'not checked yet'],
+                          ['address owner', a.exit_ip_info ?? 'not looked up yet'],
                           ['device identity', a.has_profile ? 'created' : 'not created yet'],
                           ['last seen', a.last_seen_at && now ? timeAgo(a.last_seen_at, now) : 'never'],
                           ['warm-up', warmupLeft(a)],

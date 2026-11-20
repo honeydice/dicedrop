@@ -170,6 +170,8 @@ export interface OpsAccount {
   order_scan: boolean;
   /** Warm-up: until this time the account only browses and gets no orders. */
   /** Amazon has the account on hold (its own words), until it is verified. No orders are sent to it. */
+  /** Who the outgoing (proxy) address belongs to: provider and city. */
+  exit_ip_info?: string | null;
   hold_reason?: string | null;
   hold_at?: string | null;
   /** The account's VPS browser opened to use by hand: starting, opening, open (with its address), closing. */

@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.24.0"
+VERSION = "0.24.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -203,6 +203,17 @@ def ensure_playwright():
     sys.path_importer_cache.pop(LIB, None)
     importlib.invalidate_caches()
     import playwright.sync_api  # noqa: F401
+
+
+def address_owner(ip):
+    """Who an internet address belongs to (provider, city), from a public lookup. Asked from the box itself."""
+    request = urllib.request.Request("https://ipinfo.io/" + urllib.parse.quote(ip) + "/json", headers={"User-Agent": AGENT, "Accept": "application/json"})
+    found = json.loads(urllib.request.urlopen(request, timeout=15).read().decode())
+    place = ", ".join(part for part in [found.get("city"), found.get("region"), found.get("country")] if part)
+    return " · ".join(part for part in [found.get("org") or "owner not listed", place, found.get("hostname") or ""] if part)[:280]
+
+
+checked_addresses = {}
 
 
 def direct_ip():
@@ -3226,6 +3237,18 @@ def main():
                     if account.get("signin_requested") and label not in busy_accounts and job_lock.acquire(blocking=False):
                         log("sign-in requested for " + label)
                         start_job(sign_in_job, label, label)
+                # Who each account's proxy address belongs to: looked up once per address, from the box itself.
+                for check in reply.get("ip_checks", [])[:6]:
+                    label, ip = check.get("account_label") or "", check.get("ip") or ""
+                    if not label or not ip or time.time() - checked_addresses.get(ip, 0) < 600:
+                        continue
+                    checked_addresses[ip] = time.time()
+                    try:
+                        info = address_owner(ip)
+                        call("/api/worker/v1/accounts/address", {"account": label, "ip": ip, "info": info})
+                        log("address " + ip + " (" + label + "): " + info)
+                    except Exception as failure:
+                        log("could not look up address " + ip + ": " + str(failure)[:120])
                 # An account's browser opened by hand from DiceDrop.
                 for job in reply.get("browser_jobs", []):
                     label = job.get("account_label") or ""
