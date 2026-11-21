@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.29.3"
+VERSION = "0.29.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2711,6 +2711,19 @@ def check_order(page, order):
     current_job["hold_words"] = ""
     result = check_order_look(page, order)
     number = order["amazon_order_id"]
+    if result.get("human") and order.get("_label"):
+        # Amazon's "I am human" box: say so at once, and keep this browser open live so the person can tick it.
+        # When they have, the order is looked at again right away.
+        try:
+            call("/api/worker/v1/orders/" + str(order.get("id") or "") + "/check", dict(result, screenshot=result.get("screenshot", "")))
+        except Exception:
+            pass
+        answered = needs_person(page, order["_label"], "Amazon shows its \"I am human\" box. Tick it and the worker carries on.",
+                                lambda: not human_check(page), minutes=15 if order.get("_tries") else 8)
+        if answered:
+            report(order["_label"], robot_check=False, session_state="signed_in", error="")
+            result = check_order_look(page, order)
+    result.pop("human", None)
     if current_job.get("account_on_hold") is not None:
         result["account_on_hold"] = bool(current_job["account_on_hold"])
         if current_job["account_on_hold"]:
@@ -2783,12 +2796,13 @@ def check_order_look(page, order):
         # goes with the report, and DiceDrop turns the order into an error (at once for a just-placed order).
         if human_check(page):
             log("order " + number + ": Amazon is asking this account to confirm a person is there")
-            result.update({"state": "verify", "note": "Verify Account", "attempted": False,
-                           "verify_detail": "Amazon is asking this account to confirm a person is there, so the order cannot be seen",
+            # Its own name, so it is never mistaken for Amazon's "Verify your account" hold.
+            result.update({"state": "verify", "note": "Human check", "attempted": False, "human": True,
+                           "verify_detail": "Amazon shows its \"I am human\" box on this account. Tick it in the account's live browser; the order itself is not on hold.",
                            "screenshot": picture(page, card_only=False)})
             if order.get("_label"):
                 report(order["_label"], robot_check=True, session_state="verification",
-                       error="Amazon is asking this account to confirm a person is there. Open its browser and answer it.")
+                       error="Amazon shows its \"I am human\" box. Open the live browser and tick it.")
             return result
         log("order " + number + " could not be found on Amazon (not in Your Orders, and its own page did not open)")
         result.update({"unseen": True, "fresh": bool(order.get("_tries")), "screenshot": picture(page, card_only=False),
@@ -3671,7 +3685,7 @@ def cart_only_job(job):
                 seen = {"state": "ordered", "delivery_estimate": "", "note": "", "tracking_number": "", "carrier": "", "screenshot": ""}
                 if order_id:
                     try:
-                        seen = check_order(page, {"amazon_order_id": order_id, "status": "ordered", "_label": label, "_tries": 10, "_wait": 12.0, "verify_attempts": 0,
+                        seen = check_order(page, {"id": job.get("id"), "amazon_order_id": order_id, "status": "ordered", "_label": label, "_tries": 10, "_wait": 12.0, "verify_attempts": 0,
                                                  "_verify_expected": bool(current_job.get("verify_note"))})
                     except Stop:
                         raise
