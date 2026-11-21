@@ -170,6 +170,8 @@ export interface OpsAccount {
   order_scan: boolean;
   /** Warm-up: until this time the account only browses and gets no orders. */
   /** Amazon has the account on hold (its own words), until it is verified. No orders are sent to it. */
+  /** Amazon showed this account its "are you a person" page. Warm-up and orders wait until a later visit finds Amazon normal. */
+  robot_check_at?: string | null;
   /** Its Multilogin browser was open on another computer a moment ago, so the worker is leaving it alone. */
   in_use_elsewhere?: boolean;
   /** False: the account is still checked for shipping, but no new order is sent to it. */

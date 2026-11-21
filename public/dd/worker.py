@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.29.1"
+VERSION = "0.29.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -581,6 +581,12 @@ def amazon_sign_in(page, label, secrets):
         url = page.url
         if visible(page, CAPTCHA):
             return "verification", "Amazon is showing a picture puzzle. Solve it once through the box's screen viewer."
+        if human_check(page):
+            try:
+                report(label, robot_check=True)
+            except Exception:
+                pass
+            return "verification", "Amazon is asking this account to confirm a person is there (\"I am human\"). Open its browser and answer it."
 
         if "/ap/" not in url and SITE_MARK in url and not visible(page, EMAIL) and not visible(page, PASSWORD):
             greeting = ""
@@ -590,6 +596,11 @@ def amazon_sign_in(page, label, secrets):
                 pass
             if REQUIRE_GREETING and "sign in" in greeting:
                 return "needs_sign_in", "Amazon opened a page without the account's name on it, so sign-in could not be confirmed."
+            if current_job.get("text", "").startswith("signing in"):
+                try:
+                    report(label, robot_check=False)  # a sign-in check found Amazon normal: the "confirm a person" flag comes off
+                except Exception:
+                    pass
             return "signed_in", ""
 
         if visible(page, ERROR_BOX):
@@ -967,6 +978,10 @@ def device_report(page, label):
 
 class Stop(Exception):
     """A clean, explained stop: the message is shown to the operator as is."""
+
+
+class RobotCheck(Stop):
+    """Amazon showed its "are you a person" page."""
 
 
 def run_in_account_browser(label, note, work, reason="", summary=None):
@@ -2888,6 +2903,11 @@ def warm_up_browse(page, minutes):
     ends = time.time() + minutes * 60
     searched, opened = 0, 0
 
+    def still_welcome(where):
+        # Amazon's "are you a person / I am human" page. The worker never answers it: the session ends here and the account is flagged.
+        if human_check(page) or visible(page, CAPTCHA):
+            raise RobotCheck("Amazon asked whether a person is there (" + where + "). The session stopped at once; nothing was answered.")
+
     def scroll(times):
         for _ in range(times):
             try:
@@ -2900,6 +2920,7 @@ def warm_up_browse(page, minutes):
 
     page.goto("https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
     settle(page)
+    still_welcome("on the home page")
     scroll(random.randint(1, 3))
     for term in random.sample(WARM_SEARCHES, 4):
         if time.time() > ends:
@@ -2920,6 +2941,7 @@ def warm_up_browse(page, minutes):
                 # Something is covering the search box (a pop-up): go to the results directly instead.
                 page.goto("https://www.amazon.com/s?k=" + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
         settle(page)
+        still_welcome("after a search")
         searched += 1
         scroll(random.randint(2, 4))
         for _ in range(random.randint(1, 2)):
@@ -2944,6 +2966,7 @@ def warm_up_browse(page, minutes):
                 except Exception:
                     page.goto(address if address.startswith("http") else "https://www.amazon.com" + address, wait_until="domcontentloaded", timeout=90000)
                 settle(page)
+                still_welcome("on a product page")
                 opened += 1
                 scroll(random.randint(3, 7))
                 pause(2.0, 6.0)
@@ -2953,6 +2976,7 @@ def warm_up_browse(page, minutes):
                 raise
             except Exception:
                 break
+    still_welcome("at the end")
     try:
         page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
         settle(page)
@@ -2980,6 +3004,8 @@ def warm_up_job(label):
         _, problem, _, _ = run_in_account_browser(
             label, lambda text: None, work, reason="warm-up",
             summary=lambda r, e: (False, e) if e else (True, str(r or "browsed")))
+        if problem and "whether a person is there" in problem:
+            report(label, robot_check=True, error="Amazon is asking this account to confirm a person is there. Open its browser and answer it. Warm-up and orders are paused for it until then.")
         log("warm-up for " + label + " finished" + (": " + problem if problem else ""))
     except Exception as failure:
         problem = "The warm-up could not run: " + str(failure)[:200]
