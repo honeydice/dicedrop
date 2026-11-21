@@ -169,6 +169,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
     }
   };
 
+  const [confirmCancel, setConfirmCancel] = useState('');
   const act = async (order: OpsOrder, action: Action) => {
     setBusy(order.id);
     setError('');
@@ -511,12 +512,21 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                         key={a}
                         type="button"
                         disabled={!allowed(o, a) || busy === o.id}
-                        onClick={() => void act(o, a)}
+                        onClick={() => {
+                          // An order that is already bought needs a second click: cancelling here does not cancel it on Amazon.
+                          if (a === 'cancel' && o.amazon_order_id && confirmCancel !== o.id) {
+                            setConfirmCancel(o.id);
+                            setTimeout(() => setConfirmCancel((c) => (c === o.id ? '' : c)), 6000);
+                            return;
+                          }
+                          setConfirmCancel('');
+                          void act(o, a);
+                        }}
                         className={`min-h-[44px] rounded-lg border bg-raised px-4 font-mono text-[13px] disabled:cursor-not-allowed disabled:opacity-40 ${
                           a === 'cancel' ? 'border-dangerline text-bad' : 'border-edge text-fg'
                         }`}
                       >
-                        {a}
+                        {a === 'cancel' && confirmCancel === o.id ? 'already bought · click again to cancel' : a}
                       </button>
                     ))}
                   </div>
