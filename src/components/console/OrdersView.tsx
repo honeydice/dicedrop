@@ -455,6 +455,29 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                         View screenshot
                       </button>
                     ) : null}
+                    {o.amazon_order_id && ['ordered', 'shipped', 'issue'].includes(o.status) ? (
+                      <button
+                        type="button"
+                        disabled={busy === o.id}
+                        className={btn}
+                        title="Look at this order on Amazon now, take a new screenshot, and update it"
+                        onClick={async () => {
+                          setBusy(o.id);
+                          setError('');
+                          try {
+                            const { error: rpcError } = await supabase.rpc('dd_ops_recheck_order', { p_order: o.id });
+                            if (rpcError) setError(rpcError.message);
+                            await refresh();
+                          } catch {
+                            setError('That did not go through. Try again.');
+                          } finally {
+                            setBusy('');
+                          }
+                        }}
+                      >
+                        recheck
+                      </button>
+                    ) : null}
                     {(['retry', 'hold', 'cancel'] as Action[]).map((a) => (
                       <button
                         key={a}
