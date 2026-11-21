@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.30.2"
+VERSION = "0.30.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2370,12 +2370,38 @@ def order_page_ok(page, number, tracking=False):
     return False
 
 
-def open_order(page, number, tries=2, wait=6.0):
+def open_order(page, number, tries=2, wait=6.0, direct=False):
     """Gets one specific order on screen, the way a person would: Your Orders, that order, Track package
     (or View order details). Tries again when the order is not showing yet or Amazon says it cannot load it.
     Returns (kind, the order card's words). kind is "track", "details", "list" (only the order's card in
-    Your Orders could be shown) or "" when the order could not be seen at all."""
+    Your Orders could be shown) or "" when the order could not be seen at all.
+    direct=True (used for a status check) goes straight to the order's own page first, since a check already
+    has the order number: same read, fewer page loads. If that page does not show the order, it falls through
+    to the Your Orders walk below so nothing that worked before is lost."""
     card_words = ""
+    if direct:
+        try:
+            page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            if order_page_ok(page, number):
+                words = page_words(page, 6000)
+                if account_hold(words):
+                    current_job["account_on_hold"] = True
+                    current_job["hold_words"] = hold_sentence(words)
+                    current_job["order_on_hold"] = number
+                    return "hold", words
+                if state_from_words(words) != "cancelled" and click_text(page, ["Track package", "Track Package"]):
+                    settle(page)
+                    if order_page_ok(page, number, tracking=True):
+                        return "track", words
+                    page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+                    settle(page)
+                if order_page_ok(page, number):
+                    return "details", words
+        except Stop:
+            raise
+        except Exception as failure:
+            log("opening order " + number + " directly: " + str(failure)[:160])
     for attempt in range(tries):
         last = attempt == tries - 1
         try:
@@ -2785,7 +2811,7 @@ def check_order_look(page, order):
     if seen_hold:
         log("order " + number + ": Amazon is asking to verify the payment")
 
-    kind, card_words = ("details", "") if seen_hold else open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0))
+    kind, card_words = ("details", "") if seen_hold else open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0), direct=True)
     if not kind:
         gone, shot = order_gone(page, number)
         if gone == "cancelled":
