@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.29.0"
+VERSION = "0.29.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -637,6 +637,9 @@ def amazon_sign_in(page, label, secrets):
             click_first(page, ["input#continue", "#continue input", "#continue", "input[type='submit']"])
         elif click_first(page, ["#ap-account-fixup-phone-skip-link", "a#ap-account-fixup-phone-skip-link", "#auth-account-fixup-skip-link"]):
             pass
+        elif steps.count("picked the account") < 2 and pick_saved_account(page, secrets):
+            report(label, note="choosing the account on Amazon's Switch accounts page")
+            steps.append("picked the account")
         elif "/ap/cvf" in url or "/ap/challenge" in url:
             return "verification", "Amazon wants extra verification (a code by email or text, or an approval tap)."
         else:
@@ -1184,6 +1187,32 @@ def settle(page):
     pause(1.5, 3.0)
 
 
+def pick_saved_account(page, secrets):
+    """Amazon's "Switch accounts" page lists the accounts this browser knows. Picks this account's own entry
+    (the one showing its sign-in email), which leads on to the password step. True when it clicked."""
+    try:
+        words = page_words(page, 600).lower()
+        email = (secrets.get("login_email") or "").strip().lower()
+        if "switch accounts" not in words or not email or email not in words:
+            return False
+        for selector in [".cvf-account-switcher-claim", ".cvf-account-switcher-profile-details", "[data-test-id='accountType']"]:
+            rows = page.locator(selector)
+            for index in range(min(rows.count(), 6)):
+                row = rows.nth(index)
+                if row.is_visible() and email in row.inner_text(timeout=2000).lower():
+                    row.click(timeout=8000)
+                    return True
+        entry = page.get_by_text(email, exact=False).first
+        if entry.is_visible():
+            entry.click(timeout=8000)
+            return True
+    except Stop:
+        raise
+    except Exception as failure:
+        log("could not pick the account on Amazon's Switch accounts page: " + str(failure).split("\n")[0][:160])
+    return False
+
+
 def pass_sign_in_wall(page, label, secrets):
     """Amazon sometimes asks for the password again before the cart, address book, or checkout."""
     for _ in range(4):
@@ -1201,6 +1230,8 @@ def pass_sign_in_wall(page, label, secrets):
         elif visible(page, EMAIL):
             human_type(page, EMAIL, secrets["login_email"])
             click_first(page, ["input#continue", "#continue input", "#continue", "input[type='submit']"])
+        elif pick_saved_account(page, secrets):
+            pass
         else:
             raise Stop("Amazon wants extra verification before continuing.")
         settle(page)
