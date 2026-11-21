@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.29.2"
+VERSION = "0.29.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2779,7 +2779,20 @@ def check_order_look(page, order):
             log("order " + number + " is not in the Amazon account any more (Your Orders loaded, order not listed, its page does not show it)")
             result.update({"missing": True, "screenshot": shot})
             return result
-        log("order " + number + " could not be opened on Amazon this time; it is checked again next round")
+        # Nobody can see this order right now. That is never left as a quiet "Ordered": the picture of what Amazon shows
+        # goes with the report, and DiceDrop turns the order into an error (at once for a just-placed order).
+        if human_check(page):
+            log("order " + number + ": Amazon is asking this account to confirm a person is there")
+            result.update({"state": "verify", "note": "Verify Account", "attempted": False,
+                           "verify_detail": "Amazon is asking this account to confirm a person is there, so the order cannot be seen",
+                           "screenshot": picture(page, card_only=False)})
+            if order.get("_label"):
+                report(order["_label"], robot_check=True, session_state="verification",
+                       error="Amazon is asking this account to confirm a person is there. Open its browser and answer it.")
+            return result
+        log("order " + number + " could not be found on Amazon (not in Your Orders, and its own page did not open)")
+        result.update({"unseen": True, "fresh": bool(order.get("_tries")), "screenshot": picture(page, card_only=False),
+                       "verify_detail": "the order is not in Your Orders and its own page does not open"})
         return result
 
     if kind == "hold":
@@ -3683,7 +3696,7 @@ def cart_only_job(job):
                         seen["screenshot"] = current_job["verify_shot"]
                 current_job["shot"] = seen.get("screenshot", "")
                 log("after ordering: " + str(seen.get("state")) + ", estimate '" + str(seen.get("delivery_estimate")) + "', picture " + ("taken" if seen.get("screenshot") else "missing"))
-                if seen.get("state") == "verify" or seen.get("delivery_estimate") or seen.get("screenshot"):
+                if seen.get("state") == "verify" or seen.get("delivery_estimate") or seen.get("screenshot") or seen.get("unseen"):
                     # The same report the regular order check sends: delivery window, proof picture, Verify Payment.
                     try:
                         call("/api/worker/v1/orders/" + str(job.get("id")) + "/check", seen)
