@@ -152,6 +152,23 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   const rows = useMemo(() => searched.filter((o) => tab === 'all' || o.status === tab), [searched, tab]);
   const { shown, pager } = usePaged(rows, tab);
 
+  // Recheck: where the VPS is, read every 3 seconds until it is done (10 minutes at most).
+  const [recheck, setRecheck] = useState<Record<string, { step: string; done: boolean }>>({});
+  const watchRecheck = async (id: string) => {
+    setRecheck((r) => ({ ...r, [id]: { step: 'asked · waiting for the VPS to pick it up', done: false } }));
+    for (let i = 0; i < 200; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const { data: st } = await supabase.rpc('dd_ops_recheck_status', { p_order: id });
+      const s = st as { step: string; done: boolean } | null;
+      if (!s) continue;
+      setRecheck((r) => ({ ...r, [id]: { step: s.step || 'working', done: Boolean(s.done) } }));
+      if (s.done) {
+        await refresh();
+        return;
+      }
+    }
+  };
+
   const act = async (order: OpsOrder, action: Action) => {
     setBusy(order.id);
     setError('');
@@ -472,6 +489,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                           try {
                             const { error: rpcError } = await supabase.rpc('dd_ops_recheck_order', { p_order: o.id });
                             if (rpcError) setError(rpcError.message);
+                            else void watchRecheck(o.id);
                             await refresh();
                           } catch {
                             setError('That did not go through. Try again.');
@@ -482,6 +500,11 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                       >
                         recheck
                       </button>
+                    ) : null}
+                    {recheck[o.id] ? (
+                      <span className="basis-full font-mono text-[12px]" style={{ color: recheck[o.id].done ? 'var(--st-ordered-fg, #4ade80)' : '#f59e0b' }}>
+                        recheck: {recheck[o.id].step}
+                      </span>
                     ) : null}
                     {(['retry', 'hold', 'cancel'] as Action[]).map((a) => (
                       <button

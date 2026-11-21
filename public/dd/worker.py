@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.29.4"
+VERSION = "0.30.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2877,11 +2877,21 @@ def tracking_job(job):
     label = job.get("account_label") or ""
     orders = job.get("orders") or []
     problem = ""
+    def step(text, only=None):
+        # Where the check is, for the operator who pressed "recheck" on an order. Changes nothing about the order.
+        for one in ([only] if only else orders):
+            try:
+                call("/api/worker/v1/orders/" + str(one["id"]) + "/check", {"step": text}, timeout=15)
+            except Exception:
+                pass
+
     try:
         current_job["text"] = "checking orders on " + label
+        step("VPS picked it up · opening " + label + "'s browser")
 
         def work(page, secrets, stage):
             stage[0] = "signing in on Amazon"
+            step("browser open · checking the Amazon sign-in")
             state, reason = amazon_sign_in(page, label, secrets)
             if state != "signed_in":
                 report(label, session_state=state, error=reason, note="sign-in did not finish")
@@ -2890,6 +2900,7 @@ def tracking_job(job):
             changes = 0
             for order in orders:
                 stage[0] = "checking order " + str(order.get("order_number"))
+                step("signed in · opening the order on Amazon and taking a screenshot", only=order)
                 try:
                     order["_label"] = label
                     seen = check_order(page, order)
