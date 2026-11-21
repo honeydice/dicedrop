@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.30.1"
+VERSION = "0.30.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2716,6 +2716,11 @@ def check_order(page, order):
         # When they have, the order is looked at again right away.
         try:
             call("/api/worker/v1/orders/" + str(order.get("id") or "") + "/check", dict(result, screenshot=result.get("screenshot", "")))
+        except Exception:
+            pass
+        try:
+            call("/api/worker/v1/orders/" + str(order.get("id") or "") + "/check",
+                 {"step": "Amazon shows the \"I am human\" box · waiting for you: Accounts > " + order["_label"] + " > Go to live browser"}, timeout=15)
         except Exception:
             pass
         answered = needs_person(page, order["_label"], "Amazon shows its \"I am human\" box. Tick it and the worker carries on.",
