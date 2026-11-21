@@ -20,7 +20,16 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       : await auth.db.rpc('dd_api_get_order', { p_key: auth.key, p_id: params.id });
     if (error) return fromDbError(error);
 
-    return NextResponse.json({ order: publicOrder(data.order), events: data.events ?? [], shipment: data.shipment ?? null, proofs: data.proofs ?? [] });
+    // The client sees the order's milestones and its good pictures. What went wrong on the way stays with the operator.
+    const order = publicOrder(data.order);
+    const bought = ['ordered', 'shipped', 'delivered'].includes(order.status);
+    const SHOWN = ['received', 'created', 'sent_again', 'cancel', 'linked_by_hand', 'shipped'];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const events = (Array.isArray(data.events) ? data.events : []).filter((e: any) => SHOWN.includes(e.type)).map((e: any) => ({ type: e.type, created_at: e.created_at }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const proofs = bought ? (Array.isArray(data.proofs) ? data.proofs : []).filter((p: any) => ['ordered', 'shipped', 'delivered'].includes(p.kind)) : [];
+    const shipment = data.shipment ? { ...data.shipment, status: order.status } : null;
+    return NextResponse.json({ order, events, shipment, proofs });
   } catch {
     return apiError(500, 'server_error', 'Something went wrong.');
   }

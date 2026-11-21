@@ -55,14 +55,32 @@ export function fromDbError(error: { code?: string; message?: string }) {
   }
 }
 
+/** The one sentence a client is shown for any error. What went wrong stays with the operator. */
+export const CLIENT_ISSUE = 'Could not order this item - try again';
+
+/**
+ * What a client is told an order's status is (the same rule as dd_client_status in the database):
+ * placed but not yet seen on Amazon is still "ordering"; a human check or payment check changes nothing for the client.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function clientStatus(o: any): string {
+  if (o.status === 'issue' && (o.issue_reason === 'Human check' || o.issue_reason === 'Verify Payment')) {
+    return !o.confirmed_at ? 'ordering' : o.shipped_at ? 'shipped' : 'ordered';
+  }
+  if (o.status === 'ordered' && !o.confirmed_at) return 'ordering';
+  return o.status;
+}
+
 /** The order fields the public API returns. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function publicOrder(o: any) {
+  const status = clientStatus(o);
+  const bought = status === 'ordered' || status === 'shipped' || status === 'delivered';
   return {
     dicedrop_order_id: o.dd_number,
     fulfilled_by: 'DiceDrop',
     id: o.id,
-    status: o.status,
+    status,
     cancel_requested: o.cancel_requested,
     auto_order_at: o.auto_order_at ?? null,
     source: o.source,
@@ -81,13 +99,13 @@ export function publicOrder(o: any) {
     buy_shipping: o.buy_shipping ?? null,
     delivery_window: o.metadata?.checkout?.delivery_estimate ?? null,
     profit: o.profit,
-    amazon_order_id: o.amazon_order_id,
+    amazon_order_id: bought ? o.amazon_order_id : null,
     tracking_number: o.tracking_number,
     carrier: o.carrier,
-    issue_reason: o.issue_reason,
+    issue_reason: status === 'issue' ? CLIENT_ISSUE : null,
     created_at: o.created_at,
     updated_at: o.updated_at,
-    placed_at: o.placed_at,
+    placed_at: bought ? o.placed_at : null,
     shipped_at: o.shipped_at,
     delivered_at: o.delivered_at,
   };

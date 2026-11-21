@@ -200,9 +200,9 @@ export default function DocsPage() {
             ['order.shipped', 'Carrier, tracking number and delivery window.'],
             ['order.tracking_updated', 'Tracking number or carrier changed after shipping.'],
             ['order.delivered', 'Delivered.'],
-            ['order.issue', 'Needs attention. issue_reason says why, for example "Cancelled by Amazon".'],
+            ['order.issue', 'The order could not be completed. issue_reason is always "Could not order this item - try again". Send the same order again with auto_order to retry it.'],
             ['order.cancelled', 'Cancelled before buying.'],
-            ['order.proof', 'A screenshot of a milestone: proof.kind (ordered, shipped, delivered, cancelled) and proof.image_jpeg_base64.'],
+            ['order.proof', 'A screenshot of a milestone: proof.kind (ordered, shipped, delivered) and proof.image_jpeg_base64.'],
             ['ping', 'A test pulse.'],
           ]}
         />
@@ -224,11 +224,11 @@ export default function DocsPage() {
         <Table
           rows={[
             ['pending', 'Received, waiting to be bought.'],
-            ['ordering', 'Being bought right now.'],
-            ['ordered', 'Bought. Costs and supplier order number are set.'],
+            ['ordering', 'In progress: being bought, or bought and waiting to be confirmed on Amazon.'],
+            ['ordered', 'Bought and confirmed on Amazon. Costs and supplier order number are set.'],
             ['shipped', 'On the way. Carrier and tracking are set.'],
             ['delivered', 'Delivered.'],
-            ['issue', 'Needs attention; see issue_reason.'],
+            ['issue', 'Could not be ordered. Send the same order again to retry.'],
             ['held / cancelled', 'Paused or cancelled.'],
           ]}
         />

@@ -42,6 +42,11 @@ const TABS: { id: TabId; label: string; dot: string }[] = [
   { id: 'issue', label: 'Issues', dot: PILL.issue.bg },
 ];
 
+/** Amazon's "I am human" box: nothing is wrong with the order, a person just has to tick it. Shown as HELP, and clients are not told. */
+function needsHelp(o: OpsOrder): boolean {
+  return o.status === 'issue' && o.issue_reason === 'Human check';
+}
+
 type Action = 'retry' | 'hold' | 'cancel';
 
 function allowed(o: OpsOrder, action: Action): boolean {
@@ -364,8 +369,8 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 onClick={() => setOpen(isOpen ? '' : o.id)}
                 className="flex min-h-[38px] w-full flex-wrap items-center gap-x-3 gap-y-1 bg-transparent px-3 py-2 text-left font-mono text-xs hover:bg-raised/60 sm:flex-nowrap sm:px-4 sm:py-1.5"
               >
-                <span className="w-[78px] shrink-0 rounded px-1.5 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide sm:w-[82px] sm:px-2" style={{ background: pill.bg, color: pill.fg }}>
-                  {o.status}
+                <span className="w-[78px] shrink-0 rounded px-1.5 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide sm:w-[82px] sm:px-2" style={needsHelp(o) ? { background: '#f59e0b', color: '#1c1917' } : { background: pill.bg, color: pill.fg }}>
+                  {needsHelp(o) ? 'help' : o.status}
                 </span>
                 <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
                 <span className="hidden w-[150px] shrink-0 truncate text-fg sm:block">{o.order_number}</span>
@@ -381,7 +386,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 </span>
                 <span
                   className="hidden w-[240px] shrink-0 truncate text-[12px] font-semibold md:block"
-                  style={{ color: o.status === 'issue' ? '#ef4444' : look.fg }}
+                  style={{ color: needsHelp(o) ? '#f59e0b' : o.status === 'issue' ? '#ef4444' : look.fg }}
                   title={[note, o.status === 'shipped' ? shipping : ''].filter(Boolean).join(' · ')}
                 >
                   {note}
@@ -402,7 +407,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                   <span className="text-muted"> · {shortTitle(o.title ?? o.asin ?? 'Untitled item')}{o.quantity > 1 ? ` ×${o.quantity}` : ''}</span>
                 </span>
                 {note || o.stuck ? (
-                  <span className="basis-full truncate text-[12px] font-semibold sm:hidden" style={{ color: o.status === 'issue' ? '#ef4444' : look.fg }}>
+                  <span className="basis-full truncate text-[12px] font-semibold sm:hidden" style={{ color: needsHelp(o) ? '#f59e0b' : o.status === 'issue' ? '#ef4444' : look.fg }}>
                     {note}
                     {o.stuck ? <span className="text-warn">{note ? ' · ' : ''}stuck</span> : null}
                   </span>

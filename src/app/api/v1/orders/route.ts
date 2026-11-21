@@ -146,17 +146,19 @@ export async function GET(req: Request) {
 
     const params = new URL(req.url).searchParams;
     const limit = Math.min(200, Math.max(1, Number(params.get('limit') ?? 50) || 50));
+    const wanted = params.get('status');
 
     const { data, error } = await auth.db.rpc('dd_api_list_orders', {
       p_key: auth.key,
       p_order_number: params.get('order_number'),
-      p_status: params.get('status'),
-      p_limit: limit,
+      p_status: null,
+      p_limit: wanted ? 200 : limit,
     });
     if (error) return fromDbError(error);
 
-    const rows = Array.isArray(data) ? data : [];
-    return NextResponse.json({ orders: rows.map(publicOrder) });
+    // The status filter works on what the client is shown, which can differ from the operator's status.
+    const rows = (Array.isArray(data) ? data : []).map(publicOrder).filter((o) => !wanted || o.status === wanted).slice(0, limit);
+    return NextResponse.json({ orders: rows });
   } catch {
     return apiError(500, 'server_error', 'Something went wrong.');
   }
