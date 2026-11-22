@@ -102,6 +102,7 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   const now = useNow();
 
   const [tab, setTab] = useState<TabId>('all');
+  const [showHidden, setShowHidden] = useState(false);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState('');
   const [busy, setBusy] = useState('');
@@ -148,7 +149,10 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
   }, [supabase, refresh]);
 
   const q = query.trim().toLowerCase();
-  const searched = useMemo(() => data.orders.filter((o) => matches(o, q)), [data.orders, q]);
+  const matched = useMemo(() => data.orders.filter((o) => matches(o, q)), [data.orders, q]);
+  // Hidden orders leave the queue unless "Hidden" is on. They are never deleted, just tucked away.
+  const hiddenCount = useMemo(() => matched.filter((o) => o.hidden_at).length, [matched]);
+  const searched = useMemo(() => matched.filter((o) => (showHidden ? !!o.hidden_at : !o.hidden_at)), [matched, showHidden]);
   const rows = useMemo(() => searched.filter((o) => tab === 'all' || o.status === tab), [searched, tab]);
   const { shown, pager } = usePaged(rows, tab);
 
@@ -351,8 +355,20 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
         })}
       </div>
 
+      {hiddenCount > 0 || showHidden ? (
+        <div className="-mt-2 mb-3 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowHidden((v) => !v)}
+            className="min-h-[36px] rounded-lg border border-edge bg-raised px-3 font-mono text-[12px] text-soft"
+          >
+            {showHidden ? '← back to the queue' : `show hidden (${hiddenCount})`}
+          </button>
+        </div>
+      ) : null}
+
       <Card
-        title={`GET /orders${[tab === 'all' ? '' : `status=${tab}`, clientName ? `client=${clientName}` : ''].filter(Boolean).map((p, i) => (i === 0 ? `?${p}` : `&${p}`)).join('')}`}
+        title={`GET /orders${[showHidden ? 'hidden=1' : '', tab === 'all' ? '' : `status=${tab}`, clientName ? `client=${clientName}` : ''].filter(Boolean).map((p, i) => (i === 0 ? `?${p}` : `&${p}`)).join('')}`}
         right={<Badge>{rows.length}</Badge>}
       >
         {shown.map((o) => {
@@ -546,6 +562,27 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                         {a === 'cancel' && confirmCancel === o.id ? 'already bought · click again to cancel' : a}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      disabled={busy === o.id}
+                      title={o.hidden_at ? 'Put this order back in the main queue' : 'Hide this order from the main queue (it is not deleted)'}
+                      onClick={async () => {
+                        setBusy(o.id);
+                        setError('');
+                        try {
+                          const { error: rpcError } = await supabase.rpc('dd_ops_hide_order', { p_order: o.id, p_hide: !o.hidden_at });
+                          if (rpcError) setError(rpcError.message);
+                          await refresh();
+                        } catch {
+                          setError('That did not go through. Try again.');
+                        } finally {
+                          setBusy('');
+                        }
+                      }}
+                      className="min-h-[44px] rounded-lg border border-edge bg-raised px-4 font-mono text-[13px] text-soft disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {o.hidden_at ? 'unhide' : 'hide'}
+                    </button>
                   </div>
                 </div>
               ) : null}

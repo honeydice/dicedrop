@@ -20,6 +20,7 @@ export interface OpsOrder {
   run_requested_at: string | null;
   run_kind: string | null;
   run_note: string | null;
+  hidden_at: string | null;
   session_trail: { at: string; text: string }[] | null;
   session_trail_at: string | null;
   checkout: { items?: number | null; shipping?: number | null; tax?: number | null; total?: number | null; raw?: string; gift?: string; delivery_estimate?: string } | null;
