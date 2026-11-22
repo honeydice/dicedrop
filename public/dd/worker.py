@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.30.6"
+VERSION = "0.30.7"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1027,7 +1027,7 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
 
         humanize()
         human_state.on = True
-        human_state.pace = random.uniform(1.5, 2.1) if reason.startswith(("place order", "cart-only")) else 1.0
+        human_state.pace = random.uniform(1.5, 2.1) if reason.startswith(("place order", "cart-only", "order check")) else 1.0
         stage[0] = "starting the remote control"
         with sync_playwright() as playwright:
             stage[0] = "connecting to the " + ("Multilogin" if engine == "multilogin" else "Kameleo") + " browser"
@@ -2414,6 +2414,7 @@ def open_order(page, number, tries=2, wait=6.0, direct=False):
         try:
             page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
             settle(page)
+            look_around(page, 1, 2)  # scan Your Orders like a person: the mouse moves and the page scrolls
             card = order_card(page, number)
             try:
                 listing = page_words(page, 5000)
@@ -2800,9 +2801,12 @@ def check_order_look(page, order):
     # Verify payment button. (The tracking view, which is looked at next, does not show it.) Only for orders
     # that have not shipped. Right after an order whose checkout asked for verification, look a few times:
     # the notice can take a minute to appear.
+    # Only teleport to the order's own page when a verify notice is expected (right after placing). On a routine
+    # check we do not deep-link at all: open_order walks Your Orders like a person, and the verify notice is still
+    # caught below from the order page once it is open.
     seen_hold = False
-    if order.get("status") != "shipped":
-        for look in range(4 if order.get("_verify_expected") else 1):
+    if order.get("status") != "shipped" and order.get("_verify_expected"):
+        for look in range(4):
             try:
                 page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
                 settle(page)
@@ -2818,7 +2822,7 @@ def check_order_look(page, order):
     if seen_hold:
         log("order " + number + ": Amazon is asking to verify the payment")
 
-    kind, card_words = ("details", "") if seen_hold else open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0), direct=True)
+    kind, card_words = ("details", "") if seen_hold else open_order(page, number, tries=int(order.get("_tries") or 3), wait=float(order.get("_wait") or 6.0))
     if not kind:
         gone, shot = order_gone(page, number)
         if gone == "cancelled":
@@ -2930,11 +2934,10 @@ def tracking_job(job):
 
         def work(page, secrets, stage):
             stage[0] = "signing in on Amazon"
-            step("browser open · going straight to the order on Amazon")
-            # Start at the first order's own page. A check does not need amazon.com first; if the Multilogin
-            # session is still signed in this is the only load, and if it has lapsed Amazon sends us to sign-in.
-            first_url = (ORDER_DETAILS + orders[0]["amazon_order_id"]) if orders and orders[0].get("amazon_order_id") else None
-            state, reason = amazon_sign_in(page, label, secrets, start_url=first_url)
+            step("browser open · going to amazon.com and Your Orders like a person")
+            # A check now arrives the human way: amazon.com, then Your Orders, mouse moving and scrolling, then
+            # click into the order. Slower than a straight deep link, but it does not look like a bot teleporting.
+            state, reason = amazon_sign_in(page, label, secrets)
             if state != "signed_in":
                 for one in orders:
                     try:
@@ -2947,9 +2950,10 @@ def tracking_job(job):
             changes = 0
             for order in orders:
                 stage[0] = "checking order " + str(order.get("order_number"))
-                step("signed in · opening the order on Amazon", only=order)
+                step("signed in · opening the order from Your Orders", only=order)
                 try:
                     order["_label"] = label
+                    look_around(page, 1, 3)  # move the mouse and scroll Your Orders like a person before opening the order
                     seen = check_order(page, order)
                     # The picture always goes along; DiceDrop keeps it the first time each milestone is seen.
                     reply = call("/api/worker/v1/orders/" + order["id"] + "/check", seen)
