@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.30.7"
+VERSION = "0.30.8"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2353,6 +2353,13 @@ def read_tracking(page, result, card_words=""):
     found = re.search(r"(?:Shipped with|Delivery by|Carrier:?)\s+([A-Za-z][A-Za-z .&-]{1,28}?)(?=\s+(?:Tracking|See|Your|$))", words)
     if found:
         result["carrier"] = found.group(1).strip()
+    # A live tracking number means the parcel has left Amazon, even when the tracking page headlines the
+    # arrival date ("Arriving Monday") instead of the word "Shipped". Treat it as shipped unless the page
+    # still says it has not gone out yet.
+    if result["state"] == "ordered" and result.get("tracking_number"):
+        low = (str(status) + " " + str(estimate) + " " + words).lower()
+        if not any(p in low for p in ["not yet shipped", "not yet dispatched", "preparing for shipment", "preparing to ship", "label created", "not yet been shipped"]):
+            result["state"] = "shipped"
     result["screenshot"] = picture(page, card_only=True)
     return result
 
