@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.30.4"
+VERSION = "0.30.5"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -567,12 +567,19 @@ def page_words(page, limit=220):
         return ""
 
 
-def amazon_sign_in(page, label, secrets):
-    """Walks Amazon's sign-in screens one at a time. Returns (state, error text)."""
-    page.goto(HOME_PAGE, wait_until="domcontentloaded", timeout=90000)
-    pause(2.0, 4.0)
-    page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
-    pause(1.5, 3.0)
+def amazon_sign_in(page, label, secrets, start_url=None):
+    """Walks Amazon's sign-in screens one at a time. Returns (state, error text).
+    start_url (used by order checks) opens that page first instead of the amazon.com home and account
+    pages: if the account is still signed in the page just loads and the check skips two page loads. If the
+    session has lapsed Amazon sends it to the sign-in screen and the walk below takes over exactly as normal."""
+    if start_url:
+        page.goto(start_url, wait_until="domcontentloaded", timeout=90000)
+        pause(1.0, 2.0)
+    else:
+        page.goto(HOME_PAGE, wait_until="domcontentloaded", timeout=90000)
+        pause(2.0, 4.0)
+        page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+        pause(1.5, 3.0)
 
     entered_password = False
     entered_code = False
@@ -2922,8 +2929,11 @@ def tracking_job(job):
 
         def work(page, secrets, stage):
             stage[0] = "signing in on Amazon"
-            step("browser open · checking the Amazon sign-in")
-            state, reason = amazon_sign_in(page, label, secrets)
+            step("browser open · going straight to the order on Amazon")
+            # Start at the first order's own page. A check does not need amazon.com first; if the Multilogin
+            # session is still signed in this is the only load, and if it has lapsed Amazon sends us to sign-in.
+            first_url = (ORDER_DETAILS + orders[0]["amazon_order_id"]) if orders and orders[0].get("amazon_order_id") else None
+            state, reason = amazon_sign_in(page, label, secrets, start_url=first_url)
             if state != "signed_in":
                 report(label, session_state=state, error=reason, note="sign-in did not finish")
                 raise Stop("Amazon sign-in did not finish. " + reason)
