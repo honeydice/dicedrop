@@ -462,6 +462,23 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                       </div>
                     ))}
                   </dl>
+                  {Array.isArray(o.session_trail) && o.session_trail.length ? (
+                    <div className="mt-4">
+                      <div className="font-mono text-xs text-muted">
+                        last session{o.session_trail_at && now ? ` · ${timeAgo(o.session_trail_at, now)}` : ''}
+                      </div>
+                      <ol className="mt-1 space-y-0.5 font-mono text-[12px] text-soft">
+                        {o.session_trail.map((s, i) => (
+                          <li key={i} className="flex gap-2">
+                            <span className="shrink-0 text-muted">
+                              {s.at ? new Date(s.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                            </span>
+                            <span className="break-all">{s.text}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  ) : null}
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     {o.snapshot_at ? (
                       <button
