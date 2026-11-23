@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.30.8"
+VERSION = "0.31.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1511,6 +1511,27 @@ def add_address_at_checkout(page, ship):
     # Amazon may suggest a corrected address. Keep what the buyer gave.
     if safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"]):
         settle(page)
+    # The "Verify your address" dialog is a second variant: it shows the buyer's address and a normalized
+    # suggestion (same place, e.g. "Spring" -> "Springs") and needs its own confirm. Original is pre-selected;
+    # prefer it, fall back to the suggestion since it ships to the same place, then press "Use this address".
+    if form_open():
+        try:
+            dialog_words = page_words(page, 3000).lower()
+        except Exception:
+            dialog_words = ""
+        if "verify your address" in dialog_words or "suggest" in dialog_words:
+            safe_click(page, [
+                "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='original']",
+                "input[value='ORIGINAL']", "input[value='original']", "#address-ui-widgets-original-address-block_id-input",
+            ]) or safe_click(page, [
+                "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='suggested']",
+                "input[value='SUGGESTED']", "input[value='suggested']",
+            ])
+            if click_text(page, ["Use this address", "Ship to this address", "Deliver to this address"]) or safe_click(page, [
+                "#address-ui-widgets-use-this-address-button input", "#address-ui-widgets-use-this-address-button",
+                "input[aria-labelledby*='use-this-address']", "input[aria-labelledby*='submit-button']",
+            ]):
+                settle(page)
     for _ in range(30):
         if not form_open():
             break
