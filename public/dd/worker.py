@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.2"
+VERSION = "0.31.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1390,62 +1390,97 @@ def wait_for_checkout(page, seconds=30):
     return False
 
 
-# Pulls the two addresses out of Amazon's "Verify your address" dialog: the buyer's original and Amazon's suggestion.
-# Reads each off its own radio's label so one is never mixed into the other, with a small-block fallback.
+# Pulls the two addresses out of Amazon's "Verify your address" dialog by their visible labels, so it does not
+# depend on Amazon's internal field names (those change): the block that starts "Original address" / "Suggested address".
 ADDR_SUGGEST_JS = r"""
 () => {
   const clean = (t) => (t || '').trim().replace(/^(original address|suggested address)\s*:?\s*/i, '').replace(/edit this address/ig, '').trim();
-  const fromRadio = (v) => {
-    const r = document.querySelector(
-      "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='" + v + "']," +
-      "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='" + v.toUpperCase() + "']," +
-      "input[value='" + v.toUpperCase() + "']");
-    if (!r) return '';
-    const node = r.closest('label') || r.closest('li,div,fieldset,span,p') || r.parentElement;
-    return clean(node && node.innerText);
-  };
   const pick = (lab) => {
     let best = '';
-    for (const n of document.querySelectorAll('label,li,div,span,p')) {
+    for (const n of document.querySelectorAll('label,li,div,span,p,fieldset')) {
       const t = (n.innerText || '').trim();
       if (t.toLowerCase().startsWith(lab) && t.length < 220 && (!best || t.length < best.length)) best = clean(t);
     }
     return best;
   };
-  let original = fromRadio('original') || pick('original address');
-  let suggested = fromRadio('suggested') || pick('suggested address');
-  return { original, suggested };
+  return { original: pick('original address'), suggested: pick('suggested address') };
 }
 """
 
 
-def confirm_suggestion(page):
-    """Presses "Use this address" inside Amazon's address-suggestion dialog. Scoped to the box that holds the
-    suggestion radios, so a stray "Use this address"/"Deliver to this address" button sitting behind the dialog
-    is never the one clicked (that mismatch is what made the step hang for 30s and fail)."""
-    if safe_click(page, [
-        "#address-ui-widgets-use-this-address-button input", "#address-ui-widgets-use-this-address-button",
-        "input[aria-labelledby*='use-this-address']", "[data-testid='Address_useThisAddress'] input",
-        "span:has-text('Use this address') input",
-    ]):
-        return True
+def verify_address_dialog(page):
+    """Returns the visible "Verify your address" dialog (the innermost box that holds its heading, the two
+    radios and its own "Use this address" button), or None. Everything is done inside this box so a button
+    sitting behind the dialog is never the one clicked."""
     try:
-        scope = page.locator(
-            "xpath=//*[.//input[@name='address-ui-widgets-saveOriginalOrSuggestedAddress']]"
-            "[.//button[contains(normalize-space(.),'Use this address') or contains(normalize-space(.),'Ship to this address') or contains(normalize-space(.),'Deliver to this address')]"
-            " or .//input[@type='submit' or @type='button']]"
-        ).last
-        for name in ["Use this address", "Ship to this address", "Deliver to this address"]:
-            btn = scope.get_by_role("button", name=name, exact=False)
-            if btn.count() and btn.first.is_visible():
-                btn.first.click(timeout=5000)
-                return True
-            btn = scope.get_by_text(name, exact=False).last
-            if btn.count() and btn.is_visible():
-                btn.click(timeout=5000)
-                return True
+        loc = page.locator(
+            "xpath=//*[.//*[contains(normalize-space(.),'Verify your address')]]"
+            "[.//input[@type='radio']]"
+            "[.//*[contains(normalize-space(.),'Use this address')]]"
+        )
+        if loc.count() and loc.last.is_visible():
+            return loc.last
     except Exception:
         pass
+    return None
+
+
+def resolve_address_suggestion(page, label=""):
+    """Handles Amazon's "Verify your address" dialog. The AI decides the buyer's original vs Amazon's suggestion;
+    a suggestion is accepted only when the ZIP and street number both match. The radio is chosen by position
+    (first = original, second = suggested) and "Use this address" is pressed inside the dialog. Returns True
+    when it acted on the dialog, False when there was no such dialog."""
+    modal = verify_address_dialog(page)
+    if modal is None:
+        return False
+    try:
+        pair = page.evaluate(ADDR_SUGGEST_JS) or {}
+    except Exception:
+        pair = {}
+    original_txt = (pair.get("original") or "").strip()
+    suggested_txt = (pair.get("suggested") or "").strip()
+    pick = "original"
+    if original_txt and suggested_txt:
+        answer = {}
+        try:
+            answer = call("/api/worker/v1/address-choice", {"account": label, "original": original_txt, "suggested": suggested_txt}, timeout=30) or {}
+        except Exception:
+            answer = {}
+        want = answer.get("choice")
+        if want == "stop":
+            raise Stop("Amazon suggested a different address and it needs a person. " + (answer.get("reason") or "")
+                       + " Original: " + original_txt + " | Suggested: " + suggested_txt)
+        if want == "suggested" and same_zip_and_number(original_txt, suggested_txt):
+            pick = "suggested"
+    # Original is pre-selected; only move the radio when we want the suggestion. By position, then by label.
+    if pick == "suggested":
+        radios = modal.locator("input[type='radio']")
+        picked = False
+        try:
+            if radios.count() >= 2:
+                radios.nth(1).check(force=True, timeout=4000)
+                picked = True
+        except Exception:
+            picked = False
+        if not picked:
+            try:
+                modal.get_by_text("Suggested", exact=False).first.click(timeout=3000)
+            except Exception:
+                pass
+    # Press "Use this address" inside the dialog.
+    for finder in (
+        lambda: modal.get_by_role("button", name="Use this address", exact=False),
+        lambda: modal.get_by_text("Use this address", exact=False),
+        lambda: modal.locator("input[type='submit'], button[type='submit']"),
+    ):
+        try:
+            btn = finder()
+            if btn.count() and btn.last.is_visible():
+                btn.last.click(timeout=8000)
+                settle(page)
+                return True
+        except Exception:
+            pass
     return False
 
 
@@ -1588,51 +1623,10 @@ def add_address_at_checkout(page, ship):
     if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']", "span:has-text('Use this address') input", "input[type='submit'][aria-labelledby*='submit-button']"]):
         raise Stop("Could not find \"Use this address\" on Amazon's address form." + describe(page))
     settle(page)
-    # Amazon may suggest a corrected address. Keep what the buyer gave.
-    if safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"]):
-        settle(page)
-    # The "Verify your address" dialog is a second variant: it shows the buyer's address and Amazon's suggested
-    # correction. The AI reads both and decides, but it can only pick the suggestion for a cosmetic fix of the
-    # SAME place; the worker then hard-checks that the ZIP and the street number match before accepting it.
+    # Amazon may show a "Verify your address" dialog (buyer's address vs Amazon's suggestion). Handle it inside
+    # the dialog so a button behind it is never clicked; the AI picks and the ZIP/number guard protects.
     if form_open():
-        try:
-            dialog_words = page_words(page, 3000).lower()
-        except Exception:
-            dialog_words = ""
-        if "verify your address" in dialog_words or "suggest" in dialog_words:
-            pick = "original"
-            try:
-                pair = page.evaluate(ADDR_SUGGEST_JS) or {}
-            except Exception:
-                pair = {}
-            original_txt = (pair.get("original") or "").strip()
-            suggested_txt = (pair.get("suggested") or "").strip()
-            if original_txt and suggested_txt:
-                try:
-                    answer = call("/api/worker/v1/address-choice",
-                                  {"account": current_job.get("label") or "", "original": original_txt, "suggested": suggested_txt},
-                                  timeout=30) or {}
-                except Exception:
-                    answer = {}
-                want = answer.get("choice")
-                if want == "stop":
-                    raise Stop("Amazon suggested a different address and it needs a person. "
-                               + (answer.get("reason") or "") + " Original: " + original_txt + " | Suggested: " + suggested_txt)
-                # Hard guard: never accept a suggestion that moves the ZIP or the street number, whatever the AI said.
-                if want == "suggested" and same_zip_and_number(original_txt, suggested_txt):
-                    pick = "suggested"
-            if pick == "suggested":
-                safe_click(page, [
-                    "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='suggested']",
-                    "input[value='SUGGESTED']", "input[value='suggested']",
-                ])
-            else:
-                safe_click(page, [
-                    "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='original']",
-                    "input[value='ORIGINAL']", "input[value='original']", "#address-ui-widgets-original-address-block_id-input",
-                ])
-            if confirm_suggestion(page):
-                settle(page)
+        resolve_address_suggestion(page, current_job.get("label") or "")
     for _ in range(30):
         if not form_open():
             break
