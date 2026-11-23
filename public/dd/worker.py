@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.0"
+VERSION = "0.31.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1390,6 +1390,47 @@ def wait_for_checkout(page, seconds=30):
     return False
 
 
+# Pulls the two addresses out of Amazon's "Verify your address" dialog: the buyer's original and Amazon's suggestion.
+ADDR_SUGGEST_JS = r"""
+() => {
+  const pick = (labels) => {
+    const nodes = Array.from(document.querySelectorAll('div, li, label, fieldset, span'));
+    for (const n of nodes) {
+      const t = (n.innerText || '').trim();
+      if (!t) continue;
+      for (const label of labels) {
+        const i = t.toLowerCase().indexOf(label);
+        if (i === 0 && t.length < 400) return t.replace(/^[^:]*:/, '').replace(/edit this address/ig, '').trim();
+      }
+    }
+    return '';
+  };
+  return { original: pick(['original address']), suggested: pick(['suggested address']) };
+}
+"""
+
+
+def _zip_of(text):
+    import re
+    # The ZIP sits near the end, so take the last 5-digit group (a 5-digit street number earlier won't fool it).
+    found = re.findall(r"\b(\d{5})(?:-\d{4})?\b", text or "")
+    return found[-1] if found else ""
+
+
+def _street_number_of(text):
+    import re
+    found = re.search(r"\b(\d{1,6})\b", (text or "").replace(",", " "))
+    return found.group(1) if found else ""
+
+
+def same_zip_and_number(original, suggested):
+    """True only when both addresses carry the same 5-digit ZIP and the same leading street number. This is the
+    hard floor under the AI: a suggestion that moves the ZIP or the house number is never accepted automatically."""
+    oz, sz = _zip_of(original), _zip_of(suggested)
+    on, sn = _street_number_of(original), _street_number_of(suggested)
+    return bool(oz) and oz == sz and bool(on) and on == sn
+
+
 def add_address_at_checkout(page, ship):
     """On the checkout page: Change (delivery) -> Add a new delivery address -> fill the form -> Use this address."""
     prefix = "#address-ui-widgets-enterAddress"
@@ -1511,22 +1552,46 @@ def add_address_at_checkout(page, ship):
     # Amazon may suggest a corrected address. Keep what the buyer gave.
     if safe_click(page, ["input[name='address-ui-widgets-saveOriginalOrSuggestedAddress']", "#address-ui-widgets-original-address-block_id-input"]):
         settle(page)
-    # The "Verify your address" dialog is a second variant: it shows the buyer's address and a normalized
-    # suggestion (same place, e.g. "Spring" -> "Springs") and needs its own confirm. Original is pre-selected;
-    # prefer it, fall back to the suggestion since it ships to the same place, then press "Use this address".
+    # The "Verify your address" dialog is a second variant: it shows the buyer's address and Amazon's suggested
+    # correction. The AI reads both and decides, but it can only pick the suggestion for a cosmetic fix of the
+    # SAME place; the worker then hard-checks that the ZIP and the street number match before accepting it.
     if form_open():
         try:
             dialog_words = page_words(page, 3000).lower()
         except Exception:
             dialog_words = ""
         if "verify your address" in dialog_words or "suggest" in dialog_words:
-            safe_click(page, [
-                "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='original']",
-                "input[value='ORIGINAL']", "input[value='original']", "#address-ui-widgets-original-address-block_id-input",
-            ]) or safe_click(page, [
-                "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='suggested']",
-                "input[value='SUGGESTED']", "input[value='suggested']",
-            ])
+            pick = "original"
+            try:
+                pair = page.evaluate(ADDR_SUGGEST_JS) or {}
+            except Exception:
+                pair = {}
+            original_txt = (pair.get("original") or "").strip()
+            suggested_txt = (pair.get("suggested") or "").strip()
+            if original_txt and suggested_txt:
+                try:
+                    answer = call("/api/worker/v1/address-choice",
+                                  {"account": current_job.get("label") or "", "original": original_txt, "suggested": suggested_txt},
+                                  timeout=30) or {}
+                except Exception:
+                    answer = {}
+                want = answer.get("choice")
+                if want == "stop":
+                    raise Stop("Amazon suggested a different address and it needs a person. "
+                               + (answer.get("reason") or "") + " Original: " + original_txt + " | Suggested: " + suggested_txt)
+                # Hard guard: never accept a suggestion that moves the ZIP or the street number, whatever the AI said.
+                if want == "suggested" and same_zip_and_number(original_txt, suggested_txt):
+                    pick = "suggested"
+            if pick == "suggested":
+                safe_click(page, [
+                    "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='suggested']",
+                    "input[value='SUGGESTED']", "input[value='suggested']",
+                ])
+            else:
+                safe_click(page, [
+                    "input[name='address-ui-widgets-saveOriginalOrSuggestedAddress'][value='original']",
+                    "input[value='ORIGINAL']", "input[value='original']", "#address-ui-widgets-original-address-block_id-input",
+                ])
             if click_text(page, ["Use this address", "Ship to this address", "Deliver to this address"]) or safe_click(page, [
                 "#address-ui-widgets-use-this-address-button input", "#address-ui-widgets-use-this-address-button",
                 "input[aria-labelledby*='use-this-address']", "input[aria-labelledby*='submit-button']",
