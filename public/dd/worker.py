@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.3"
+VERSION = "0.31.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1166,8 +1166,13 @@ def safe_click(page, selectors):
             described = ""
         if any(word in described for word in NEVER_CLICK):
             raise Stop("Refused to click a buy button (" + selector + "). This run never places orders.")
-        target.click()
-        return True
+        # A short timeout so a match that is present but not actionable (e.g. a button behind a dialog) can never
+        # hang for Playwright's 30-second default; move on to the next selector instead.
+        try:
+            target.click(timeout=6000)
+            return True
+        except Exception:
+            continue
     return False
 
 
@@ -1542,11 +1547,14 @@ def add_address_at_checkout(page, ship):
                     continue
                 entry.click()
                 pause(0.6, 1.2)
-                if click_text(page, ["Deliver to this address", "Use this address", "Ship to this address"]) or safe_click(page, ["#shipToThisAddressButton input", "input[data-testid='Address_selectShipToThisAddress']"]):
+                # Picking a saved address can also pop the "Verify your address" dialog; handle it either way.
+                resolve_address_suggestion(page, current_job.get("label") or "")
+                if delivering_to_buyer() or click_text(page, ["Deliver to this address", "Use this address", "Ship to this address"]) or safe_click(page, ["#shipToThisAddressButton input", "input[data-testid='Address_selectShipToThisAddress']"]):
                     settle(page)
                     for _ in range(20):
                         if delivering_to_buyer():
                             return "picked the saved address"
+                        resolve_address_suggestion(page, current_job.get("label") or "")
                         time.sleep(0.5)
                 break
         except Exception:
@@ -1623,15 +1631,19 @@ def add_address_at_checkout(page, ship):
     if not safe_click(page, ["#address-ui-widgets-form-submit-button input", "#address-ui-widgets-form-submit-button", "input[aria-labelledby='address-ui-widgets-form-submit-button-announce']", "span:has-text('Use this address') input", "input[type='submit'][aria-labelledby*='submit-button']"]):
         raise Stop("Could not find \"Use this address\" on Amazon's address form." + describe(page))
     settle(page)
-    # Amazon may show a "Verify your address" dialog (buyer's address vs Amazon's suggestion). Handle it inside
-    # the dialog so a button behind it is never clicked; the AI picks and the ZIP/number guard protects.
-    if form_open():
-        resolve_address_suggestion(page, current_job.get("label") or "")
-    for _ in range(30):
-        if not form_open():
+    # Amazon may show a "Verify your address" dialog. It is NOT the address form, so form_open() cannot see it:
+    # look for the dialog itself and handle it, retrying briefly in case it appears a moment after submit.
+    for _ in range(16):
+        if resolve_address_suggestion(page, current_job.get("label") or ""):
+            break
+        if not form_open() and verify_address_dialog(page) is None:
             break
         time.sleep(0.5)
-    if form_open():
+    for _ in range(30):
+        if not form_open() and verify_address_dialog(page) is None:
+            break
+        time.sleep(0.5)
+    if form_open() or verify_address_dialog(page) is not None:
         message = ""
         try:
             message = " ".join(first_visible(page, ".a-alert-error, .a-box.a-alert-inline-error, .a-alert-inline-error").inner_text(timeout=3000).split())[:200]
@@ -1639,8 +1651,11 @@ def add_address_at_checkout(page, ship):
             pass
         raise Stop("Address not found: Amazon did not accept the buyer's address." + (" Amazon says: " + message if message else describe(page)))
     settle(page)
-    # Some layouts return to the address list with the new one selected and a confirm button.
-    safe_click(page, ["#shipToThisAddressButton input", "input[data-testid='Address_selectShipToThisAddress']", "input[aria-labelledby='shipToThisAddressButton-announce']", "span:has-text('Deliver to this address') input"])
+    # Some layouts return to the address list with the new one selected and a confirm button. Skip it when delivery
+    # is already set, and drop the broad "Deliver to this address" text selector (it matches the page's main
+    # checkout continue button, which can sit behind a dialog and hang the step).
+    if not delivering_to_buyer():
+        safe_click(page, ["#shipToThisAddressButton input", "input[data-testid='Address_selectShipToThisAddress']", "input[aria-labelledby='shipToThisAddressButton-announce']"])
     settle(page)
     first_name = ship["name"].split()[0]
     try:
