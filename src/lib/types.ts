@@ -196,7 +196,7 @@ export interface OpsAccount {
   warmup_last_at?: string | null;
   warmup_sessions?: number;
   warmup_next_at?: string | null;
-  stage?: 'live' | 'warmup';
+  stage?: 'live' | 'warmup' | 'archived';
   password_set: boolean;
   awaiting_tracking: number;
   signin_requested_at: string | null;

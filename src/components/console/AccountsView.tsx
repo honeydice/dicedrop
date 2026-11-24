@@ -95,8 +95,8 @@ function Rows({ items }: { items: [string, string][] }) {
 export function AccountsView({ initial, initialError }: { initial: OpsAccounts; initialError: string }) {
   const { data, error, setError, refresh } = useLive<OpsAccounts>('dd_ops_accounts', undefined, initial, initialError);
   const now = useNow();
-  // The two lanes: live (order-eligible, the default) and warm-up (browse-only).
-  const [view, setView] = useState<'live' | 'warmup'>('live');
+  // The lanes: live (order-eligible, the default), warm-up (browse-only), and archived (Trash — inert).
+  const [view, setView] = useState<'live' | 'warmup' | 'archived'>('live');
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState('');
   // Accounts are grouped into one folder per supplier. One folder is open at a time.
@@ -183,6 +183,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const suppliers = Array.from(new Set(['amazon', ...data.accounts.map((a) => a.supplier || 'amazon')])).sort();
   const liveCount = data.accounts.filter((a) => (a.stage ?? 'live') === 'live').length;
   const warmupCount = data.accounts.filter((a) => (a.stage ?? 'live') === 'warmup').length;
+  const archivedCount = data.accounts.filter((a) => (a.stage ?? 'live') === 'archived').length;
   const rows = data.accounts.filter((a) => {
     if ((a.stage ?? 'live') !== view) return false;
     if ((a.supplier || 'amazon') !== folder) return false;
@@ -211,7 +212,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           key={editId || 'new'}
           account={data.accounts.find((x) => x.id === editId) ?? null}
           data={data}
-          defaultStage={view}
+          defaultStage={view === 'warmup' ? 'warmup' : 'live'}
           onClose={() => {
             setAdding(false);
             setEditId('');
@@ -243,7 +244,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       ) : null}
 
       <div role="tablist" aria-label="Account lane" className="mb-5 flex gap-2">
-        {([['live', 'Active accounts', liveCount], ['warmup', 'Warm up', warmupCount]] as [typeof view, string, number][]).map(([v, label, n]) => (
+        {([['live', 'Active accounts', liveCount], ['warmup', 'Warm up', warmupCount], ['archived', 'Trash', archivedCount]] as [typeof view, string, number][]).map(([v, label, n]) => (
           <button
             key={v}
             type="button"
@@ -264,6 +265,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       {view === 'warmup' ? (
         <p className="mb-4 text-[13px] text-muted">
           Warm-up accounts only ever browse Amazon — searching, reading, wandering sections, adding to cart and emptying it — on a rotating schedule. They are never handed an order until you move one to live.
+        </p>
+      ) : null}
+      {view === 'archived' ? (
+        <p className="mb-4 text-[13px] text-muted">
+          Trashed accounts do nothing — no orders, no warm-up, no checks. They stay here in case you need their details or history. Restore one to a lane, or remove it for good.
         </p>
       ) : null}
 
@@ -440,7 +446,26 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                 <div className="border-t border-divider bg-raised/30 px-3 py-4 sm:px-6 sm:py-5">
                   {/* One row of controls: the ordering switch, one Actions menu, and the live browser link when it is open. */}
                   <div className="mb-4 flex flex-wrap items-center gap-2.5">
-                    {(a.stage ?? 'live') === 'warmup' ? (
+                    {(a.stage ?? 'live') === 'archived' ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={btnAccent}
+                          onClick={() => { if (window.confirm(`Restore ${a.label} to live? It becomes eligible for orders again.`)) void run(() => setAccountStage(a.id, 'live')); }}
+                        >
+                          Restore to live
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={btn}
+                          onClick={() => void run(() => setAccountStage(a.id, 'warmup'))}
+                        >
+                          Restore to warm up
+                        </button>
+                      </>
+                    ) : (a.stage ?? 'live') === 'warmup' ? (
                       <button
                         type="button"
                         disabled={busy}
@@ -476,6 +501,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         else if (choice === 'hold') void run(() => clearHold(a.id));
                         else if (choice === 'tolive') void run(() => setAccountStage(a.id, 'live'));
                         else if (choice === 'towarmup') void run(() => setAccountStage(a.id, 'warmup'));
+                        else if (choice === 'toarchived') { if (window.confirm(`Move ${a.label} to Trash? It stops all activity but is kept so you can restore it.`)) void run(() => setAccountStage(a.id, 'archived')); }
                         else if (choice.startsWith('warm:')) void run(() => setWarmup(a.id, Number(choice.slice(5))));
                         else if (choice === 'kameleo') void run(() => setAccountEngine(a.id, 'kameleo', ''));
                         else if (choice === 'multilogin') {
@@ -529,9 +555,22 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         <option value="multilogin">{a.engine === 'multilogin' ? 'Change Multilogin profile' : 'Switch to Multilogin'}</option>
                       </optgroup>
                       <optgroup label="Account">
-                        {(a.stage ?? 'live') === 'warmup'
-                          ? <option value="tolive">Move to live (allow orders)</option>
-                          : <option value="towarmup">Move to warm up (browse only)</option>}
+                        {(a.stage ?? 'live') === 'archived' ? (
+                          <>
+                            <option value="tolive">Restore to live</option>
+                            <option value="towarmup">Restore to warm up</option>
+                          </>
+                        ) : (a.stage ?? 'live') === 'warmup' ? (
+                          <>
+                            <option value="tolive">Move to live (allow orders)</option>
+                            <option value="toarchived">Move to Trash</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="towarmup">Move to warm up (browse only)</option>
+                            <option value="toarchived">Move to Trash</option>
+                          </>
+                        )}
                         {a.hold_reason ? <option value="hold">Account verified · clear hold</option> : null}
                         <option value="pause">{a.status === 'paused' ? 'Resume account' : 'Pause account (nothing opens it)'}</option>
                         <option value="remove">Remove account</option>

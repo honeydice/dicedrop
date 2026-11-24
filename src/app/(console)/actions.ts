@@ -437,7 +437,7 @@ export async function clearHold(id: string): Promise<Result> {
 }
 
 /** Moves an account between lanes: 'live' (order-eligible, on the main page) or 'warmup' (browse-only, on the Warm up tab). */
-export async function setAccountStage(id: string, stage: 'live' | 'warmup'): Promise<Result> {
+export async function setAccountStage(id: string, stage: 'live' | 'warmup' | 'archived'): Promise<Result> {
   try {
     const ctx = await operatorDb();
     if (!ctx) return DENIED;
