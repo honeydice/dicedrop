@@ -26,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.33.1"
+VERSION = "0.33.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1063,12 +1063,23 @@ def run_ip_probe(profile_name, key):
     if not key:
         out["error"] = "no ipapi key reached the box"
         return out
+    # The proxy login (not the password) — tells us whether a session token can drive rotation.
+    out["proxy_username"] = proxy.get("username")
     try:
         d = ipapi_check(proxy, key)
     except Exception as failure:
         out["error"] = "ipapi.is through the proxy failed: " + str(failure)[:200]
         return out
     out.update(ip_verdict(d))
+    # Rotation test: open a fresh connection a few seconds later and see whether the mobile IP moves on
+    # its own. If it changes, headless rotation is as simple as reconnecting.
+    try:
+        time.sleep(3)
+        d2 = ipapi_check(proxy, key)
+        out["second_ip"] = d2.get("ip")
+        out["ip_changed_on_reconnect"] = bool(d2.get("ip") and d2.get("ip") != d.get("ip"))
+    except Exception as failure:
+        out["second_ip_error"] = str(failure)[:160]
     return out
 
 
