@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.34.0"
+VERSION = "0.34.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1048,18 +1048,17 @@ def rotate_sid(username):
 
 def mlx_set_proxy(pid, proxy, new_username):
     """Write a changed proxy (new session username) onto a profile, so it launches on that vetted IP.
-    Uses Multilogin's partial-update endpoint. Returns the endpoint path that worked."""
-    body = {"profile_id": pid, "proxy": {
-        "host": proxy.get("host"), "type": proxy.get("type"), "port": proxy.get("port"),
-        "username": new_username, "password": proxy.get("password"), "save_traffic": proxy.get("save_traffic", False)}}
-    errors = []
-    for path in ("/profile/partial", "/profile/update"):
-        try:
-            mlx_request("POST", MLX_API + path, body, token=mlx_token())
-            return path
-        except Exception as failure:
-            errors.append(path + ": " + str(failure)[:140])
-    raise Stop("could not write the proxy to the profile — " + " | ".join(errors))
+    POST /profile/update with the proxy inside parameters and proxy_masking=custom (Multilogin's schema)."""
+    body = {"profile_id": pid, "parameters": {
+        "flags": {"proxy_masking": "custom"},
+        "proxy": {
+            "host": proxy.get("host"), "type": proxy.get("type"), "port": proxy.get("port"),
+            "username": new_username, "password": proxy.get("password"), "save_traffic": proxy.get("save_traffic", False)}}}
+    try:
+        mlx_request("POST", MLX_API + "/profile/update", body, token=mlx_token())
+        return "/profile/update"
+    except Exception as failure:
+        raise Stop("could not write the proxy to the profile via /profile/update: " + str(failure)[:200])
 
 
 def run_ip_probe(profile_name, key):
