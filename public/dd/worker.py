@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.7"
+VERSION = "0.31.8"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1525,16 +1525,40 @@ def add_address_at_checkout(page, ship):
             pass
         return False
 
+    def ai_open_address_form():
+        """Business accounts (and Amazon's newer single-page checkout) label and place the delivery
+        "Change" / "Add a new delivery address" controls differently, so the fixed selectors can miss
+        them. When that happens, hand the page to the AI helper: it can see the small "Change" link
+        next to the address, open the list, and choose "Add a new address" the same way a person would.
+        The deterministic filler then takes over once the form (Full name field) is on screen."""
+        if form_open() or delivering_to_buyer():
+            return True
+        try:
+            assist(
+                page, current_job.get("label") or "",
+                "Open Amazon's \"Add a new delivery address\" form so a new shipping address can be typed in. "
+                "The current delivery address has a small \"Change\" link or button next to it: click that, "
+                "then choose \"Add a new delivery address\" (or \"Add a new address\"). Stop as soon as the "
+                "address form with a \"Full name\" field is on screen. Do not place the order and do not reuse "
+                "the address already shown.",
+                finished=lambda: form_open() or delivering_to_buyer(),
+                max_steps=6,
+            )
+        except Stop:
+            raise
+        except Exception:
+            pass
+        return form_open() or delivering_to_buyer()
+
     if delivering_to_buyer():
         return "already set"
 
     if not form_open():
         if not any(visible(page, selector) for selector in add_new):
             link = delivery_change_link(page)
-            if link is None:
-                raise Stop("Could not find the delivery \"Change\" link on Amazon's checkout page." + describe(page))
-            link.click()
-            settle(page)
+            if link is not None:
+                link.click()
+                settle(page)
         # If this buyer's address is already saved on the account, pick it instead of adding it a second time.
         try:
             saved = page.get_by_text(ship["name"], exact=True)
@@ -1560,7 +1584,13 @@ def add_address_at_checkout(page, ship):
         except Exception:
             pass
         if not form_open() and not safe_click(page, add_new):
-            raise Stop("Could not find \"Add a new delivery address\" on Amazon's checkout page." + describe(page))
+            # Fixed selectors missed the "Change" / "Add a new address" controls (common on business
+            # accounts). Let the AI helper open the form before giving up.
+            ai_open_address_form()
+            if delivering_to_buyer():
+                return "the AI helper set the address"
+            if not form_open():
+                raise Stop("Could not find \"Add a new delivery address\" on Amazon's checkout page." + describe(page))
         for _ in range(20):
             if form_open():
                 break
