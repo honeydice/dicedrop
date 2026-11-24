@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.4"
+VERSION = "0.31.5"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2495,6 +2495,54 @@ def read_tracking(page, result, card_words=""):
     return result
 
 
+def read_order_totals(page):
+    """Reads the cost summary off an order's own details page (Item(s) Subtotal / Shipping / Tax / Grand Total),
+    so a manual order gets its real COGS and tax, not just a placeholder. Returns a dict with any it could read."""
+    import re
+    text = ""
+    for selector in ["#od-subtotals", "#odSubTotals", "[data-component='orderSummary']", "#order-summary", ".a-box-group .a-box-inner"]:
+        try:
+            loc = page.locator(selector)
+            if loc.count() > 0:
+                candidate = " ".join(loc.first.inner_text(timeout=4000).split())
+                if "$" in candidate and re.search(r"(grand )?total", candidate, re.I):
+                    text = candidate
+                    break
+        except Exception:
+            continue
+    if not text:
+        # Fall back to the smallest page region that reads like an order summary.
+        try:
+            body = " ".join(page.locator("body").first.inner_text(timeout=5000).split())
+            spot = re.search(r"(item\(?s\)?\s*subtotal.{0,240}?(?:grand total|order total)[^$]*\$\s*[0-9,]+\.[0-9]{2})", body, re.I)
+            if spot:
+                text = spot.group(1)
+        except Exception:
+            text = ""
+    if not text:
+        return {}
+
+    def money(pattern):
+        m = re.search(r"(?:" + pattern + r")[^$A-Za-z0-9]{0,18}\$\s*([0-9,]+\.[0-9]{2})", text, re.I)
+        return float(m.group(1).replace(",", "")) if m and m.group(1) else None
+
+    totals = {}
+    for key, pat in (
+        ("items", r"item\(?s\)?\s*subtotal"),
+        ("shipping", r"shipping(?: ?& ?handling| and handling)?"),
+        ("tax", r"(?<!before )(?:estimated )?tax(?: to be collected)?"),  # not "Total before tax"
+        ("total", r"grand total|order total"),
+    ):
+        value = money(pat)
+        if value is not None:
+            totals[key] = value
+    if "items" not in totals:
+        value = money(r"subtotal")
+        if value is not None:
+            totals["items"] = value
+    return totals
+
+
 DATE_RE = r"((?:Arriving|Now expected|Expected|Delivery estimate|Estimated delivery|Delivery|Delivered):?\s+(?:today|tomorrow|(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day(?:,?\s+[A-Za-z]{3,9}\.?\s+\d{1,2})?|[^.|\d]{0,30}?\d{1,2}(?:\s*-\s*(?:[A-Za-z]+\.?\s+)?\d{1,2})?))"
 
 
@@ -3050,6 +3098,12 @@ def check_order_look(page, order):
             result["screenshot"] = ""
     else:
         result["screenshot"] = picture(page, card_only=False)
+        # On the order's own page, read its cost summary so COGS/tax land on the order (mainly for manual orders).
+        try:
+            for key, value in read_order_totals(page).items():
+                result[key] = value
+        except Exception:
+            pass
     return result
 
 
