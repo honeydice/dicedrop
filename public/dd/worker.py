@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.8"
+VERSION = "0.31.9"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2279,6 +2279,24 @@ def place_order(page, label=""):
         if "/cpe/" in address and not verify_tried:
             # "Verify payment": answer it before doing anything else, or Amazon cancels the order later.
             verify_tried = True
+            # Snapshot the identity page the instant it shows, before the checkout advances past it — otherwise
+            # the only picture kept ends up being the thank-you page it moves on to (so the evidence was useless).
+            try:
+                current_job["verify_shot"] = base64.b64encode(page.screenshot(type="jpeg", quality=55, full_page=False)).decode()
+            except Exception:
+                pass
+            try:
+                early = []
+                for frame in page.frames:
+                    try:
+                        found = frame.evaluate(FRAME_FIELDS_JS)
+                        early.append({"frame": frame.url.split("?")[0][-60:], "fields": [f["tag"] + ":" + f["type"] + " " + f["key"] for f in found.get("fields", [])], "buttons": found.get("buttons", []), "says": found.get("says", "")[:200]})
+                    except Exception:
+                        continue
+                if early:
+                    current_job["verify_seen"] = json.dumps(early)[:1800]
+            except Exception:
+                pass
             try:
                 current_job["verify_note"] = verify_payment(page, label)
             except Exception as failure:
@@ -3921,6 +3939,14 @@ def cart_only_job(job):
         except Exception as failure:
             log("could not report on order " + job.get("order_number", "") + ": " + str(failure))
 
+    def trail(text):
+        # A plain-English line on the order's "?" session trail — what the worker saw and why, without
+        # changing the order's status. Used for the identity/verify decision so the reason isn't invisible.
+        try:
+            call("/api/worker/v1/orders/" + order_id + "/check", {"step": text})
+        except Exception:
+            pass
+
     try:
         current_job["text"] = "cart run " + job.get("order_number", "")
         current_job["progress"] = progress
@@ -4019,21 +4045,25 @@ def cart_only_job(job):
                         log("after ordering: could not look at the order: " + str(failure)[:200])
                 if not seen.get("delivery_estimate") and current_job.get("thankyou_estimate"):
                     seen["delivery_estimate"] = current_job["thankyou_estimate"]
-                # Amazon's "Verify payment - Confirm your identity to complete this payment" page at checkout: the page has
-                # nothing to click, moves on, and Amazon still creates the order. Every order that went through it was then
-                # cancelled or held by Amazon within minutes (DD-100011, DD-100013, DD-100010, DD-100004), even though the
-                # order page and the account showed nothing at first. So such an order is reported as Verify Payment right away,
-                # with the picture of that page. It is watched every 3 minutes and turns Ordered only if it is still standing after 45.
-                if current_job.get("verify_note") and seen.get("state") == "ordered" and not seen.get("verified") and not current_job.get("verify_ai_ok"):
-                    # Amazon or the bank asked to confirm the payment during checkout and it was not answered.
-                    # The order exists, but Amazon cancels these if the payment is not confirmed: say so now.
-                    seen["state"] = "verify"
-                    seen["note"] = "Verify Payment"
-                    seen["attempted"] = False
-                    seen["verify_detail"] = ("Amazon showed \"Confirm your identity to complete this payment\" at checkout. Orders that go through that page "
-                                             "have been cancelled by Amazon within minutes, so this one is watched until it ships or is cancelled.")
-                    if current_job.get("verify_shot"):
-                        seen["screenshot"] = current_job["verify_shot"]
+                # Checkout passed through Amazon's "Confirm your identity to complete this payment" (/cpe/) page.
+                # Passing through it is no longer treated as a problem on its own. There are two cases, and they are
+                # not the same: sometimes the worker gets STUCK on that page and the order can't go through — that is a
+                # real Verify Payment. But when it gets PAST it and the order page shows the order, Amazon created it
+                # and it reads like any normal order. In that case it is counted as Ordered and watched: it only turns
+                # into Verify Payment if this first look — or a later routine account check — actually finds Amazon
+                # holding, hiding, or cancelling it. check_order has already made that call above (seen["state"]).
+                if current_job.get("verify_note"):
+                    if seen.get("state") == "ordered":
+                        trail("Checkout passed Amazon's \"Confirm your identity\" page (/cpe/); the order then showed on "
+                              "the order page, so it's counted as ordered and watched — it'll only surface if a later "
+                              "check finds it flagged.")
+                    else:
+                        # Did not come back as a clean order (stuck on the identity page, or Amazon is holding it).
+                        # Keep check_order's own verdict and show the identity page captured the moment it appeared.
+                        if seen.get("note") == "Verify Payment" and current_job.get("verify_shot") and not seen.get("screenshot"):
+                            seen["screenshot"] = current_job["verify_shot"]
+                        trail("Checkout went through Amazon's identity page (/cpe/) and the order page came back as "
+                              + str(seen.get("note") or seen.get("state") or "unconfirmed") + " — see the order's status.")
                 current_job["shot"] = seen.get("screenshot", "")
                 log("after ordering: " + str(seen.get("state")) + ", estimate '" + str(seen.get("delivery_estimate")) + "', picture " + ("taken" if seen.get("screenshot") else "missing"))
                 if seen.get("state") == "verify" or seen.get("delivery_estimate") or seen.get("screenshot") or seen.get("unseen"):
