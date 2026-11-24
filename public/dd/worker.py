@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.6"
+VERSION = "0.31.7"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3077,7 +3077,9 @@ def check_order_look(page, order):
             return result
     if kind == "track":
         result["state"] = "ordered"
-        return read_tracking(page, result, card_words)
+        read_tracking(page, result, card_words)
+        add_order_costs(page, result, number, order)
+        return result
 
     words = card_words if kind == "list" else page_words(page, 6000)
     from_card = state_from_words(card_words, short=True) if card_words else "ordered"
@@ -3101,19 +3103,29 @@ def check_order_look(page, order):
             result["screenshot"] = ""
     else:
         result["screenshot"] = picture(page, card_only=False)
-        # On the order's own page, read its cost summary so COGS/tax land on the order (mainly for manual orders).
-        try:
-            totals = read_order_totals(page)
-            for key, value in totals.items():
-                result[key] = value
-            if not totals.get("total"):
-                # Could not parse it (e.g. a layout we have not seen) — keep a short sample of the summary text.
-                sample = order_summary_text(page)
-                if sample:
-                    result["cost_text"] = sample[:380]
-        except Exception:
-            pass
+        add_order_costs(page, result, number, order)
     return result
+
+
+def add_order_costs(page, result, number, order):
+    """Reads the order's cost summary (COGS/tax) into the result, but only for an order that still needs it
+    (need_cost from the server, set while buy_items is empty — mainly manual orders). Makes sure we are on the
+    order's own details page first, since the tracking page has no cost summary."""
+    if not order.get("need_cost"):
+        return
+    try:
+        if "order-details" not in (page.url or ""):
+            page.goto(ORDER_DETAILS + number, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+        totals = read_order_totals(page)
+        for key, value in totals.items():
+            result[key] = value
+        if not totals.get("total"):
+            sample = order_summary_text(page)
+            if sample:
+                result["cost_text"] = sample[:380]
+    except Exception:
+        pass
 
 
 def tracking_job(job):
