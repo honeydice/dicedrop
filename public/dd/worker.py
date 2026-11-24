@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.5"
+VERSION = "0.31.6"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2495,30 +2495,37 @@ def read_tracking(page, result, card_words=""):
     return result
 
 
-def read_order_totals(page):
-    """Reads the cost summary off an order's own details page (Item(s) Subtotal / Shipping / Tax / Grand Total),
-    so a manual order gets its real COGS and tax, not just a placeholder. Returns a dict with any it could read."""
+def order_summary_text(page):
+    """The order's cost-summary text. Classic page (#od-subtotals) first; otherwise the window of the page around
+    the final total, which covers the newer business "/your-orders/order-details" layout too."""
     import re
-    text = ""
-    for selector in ["#od-subtotals", "#odSubTotals", "[data-component='orderSummary']", "#order-summary", ".a-box-group .a-box-inner"]:
+    for selector in ["#od-subtotals", "#odSubTotals", "[data-component='orderSummary']", "#order-summary"]:
         try:
             loc = page.locator(selector)
             if loc.count() > 0:
                 candidate = " ".join(loc.first.inner_text(timeout=4000).split())
-                if "$" in candidate and re.search(r"(grand )?total", candidate, re.I):
-                    text = candidate
-                    break
+                if "$" in candidate and re.search(r"(grand |order )?total", candidate, re.I):
+                    return candidate
         except Exception:
             continue
-    if not text:
-        # Fall back to the smallest page region that reads like an order summary.
-        try:
-            body = " ".join(page.locator("body").first.inner_text(timeout=5000).split())
-            spot = re.search(r"(item\(?s\)?\s*subtotal.{0,240}?(?:grand total|order total)[^$]*\$\s*[0-9,]+\.[0-9]{2})", body, re.I)
-            if spot:
-                text = spot.group(1)
-        except Exception:
-            text = ""
+    try:
+        body = " ".join(page.locator("body").first.inner_text(timeout=6000).split())
+    except Exception:
+        return ""
+    # The summary sits around the final total; take a window there so stray item prices are not read.
+    anchor = None
+    for m in re.finditer(r"grand total|order total|order summary", body, re.I):
+        anchor = m
+    if anchor:
+        return body[max(0, anchor.start() - 420):anchor.end() + 140]
+    return body
+
+
+def read_order_totals(page):
+    """Reads the cost summary off an order's own details page (Subtotal / Shipping / Tax / Grand Total), so a
+    manual order gets its real COGS and tax, not just a placeholder. Returns a dict with any it could read."""
+    import re
+    text = order_summary_text(page)
     if not text:
         return {}
 
@@ -2528,18 +2535,14 @@ def read_order_totals(page):
 
     totals = {}
     for key, pat in (
-        ("items", r"item\(?s\)?\s*subtotal"),
-        ("shipping", r"shipping(?: ?& ?handling| and handling)?"),
+        ("items", r"item\(?s\)?\s*subtotal|subtotal(?:\s*\(\d+[^)]*\))?"),
+        ("shipping", r"shipping(?: ?&? ?handling)?"),
         ("tax", r"(?<!before )(?:estimated )?tax(?: to be collected)?"),  # not "Total before tax"
         ("total", r"grand total|order total"),
     ):
         value = money(pat)
         if value is not None:
             totals[key] = value
-    if "items" not in totals:
-        value = money(r"subtotal")
-        if value is not None:
-            totals["items"] = value
     return totals
 
 
@@ -3100,8 +3103,14 @@ def check_order_look(page, order):
         result["screenshot"] = picture(page, card_only=False)
         # On the order's own page, read its cost summary so COGS/tax land on the order (mainly for manual orders).
         try:
-            for key, value in read_order_totals(page).items():
+            totals = read_order_totals(page)
+            for key, value in totals.items():
                 result[key] = value
+            if not totals.get("total"):
+                # Could not parse it (e.g. a layout we have not seen) — keep a short sample of the summary text.
+                sample = order_summary_text(page)
+                if sample:
+                    result["cost_text"] = sample[:380]
         except Exception:
             pass
     return result
