@@ -403,10 +403,13 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                 onClick={() => setOpen(isOpen ? '' : o.id)}
                 className="flex min-h-[38px] w-full flex-wrap items-center gap-x-3 gap-y-1 bg-transparent px-3 py-2 text-left font-mono text-xs hover:bg-raised/60 sm:flex-nowrap sm:px-4 sm:py-1.5"
               >
+                <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
                 <span className="w-[78px] shrink-0 rounded px-1.5 py-[3px] text-center text-[11px] font-semibold uppercase tracking-wide sm:w-[82px] sm:px-2" style={needsHelp(o) ? { background: '#f59e0b', color: '#1c1917' } : { background: pill.bg, color: pill.fg }}>
                   {needsHelp(o) ? 'help' : o.status}
                 </span>
-                <span className="w-[84px] shrink-0 truncate text-accent">{o.dd_number}</span>
+                <span className="w-[42px] shrink-0 tabular-nums text-muted" title={now ? new Date(o.updated_at).toLocaleString() : undefined}>
+                  {now ? new Date(o.updated_at).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }) : ' '}
+                </span>
                 <span className="hidden w-[150px] shrink-0 truncate text-fg sm:block">{o.order_number}</span>
                 <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
                 <span className="hidden w-[160px] shrink-0 truncate text-soft sm:block" title={o.ship_name ?? o.buyer_name ?? ''}>
