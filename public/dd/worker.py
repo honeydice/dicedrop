@@ -26,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.33.2"
+VERSION = "0.33.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1035,6 +1035,31 @@ def ip_verdict(d):
     }
 
 
+def rotate_sid(username):
+    """Give a Multilogin mobile-proxy username a fresh session token, which the proxy honours as a new IP.
+    The username looks like '…-type-mobile-sid-zADoMemg-filter-medium'; we swap the -sid-XXXX part."""
+    token = "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(8))
+    if re.search(r"-sid-[^-]+", username or ""):
+        return re.sub(r"-sid-[^-]+", "-sid-" + token, username)
+    return (username or "") + "-sid-" + token
+
+
+def mlx_set_proxy(pid, proxy, new_username):
+    """Write a changed proxy (new session username) onto a profile, so it launches on that vetted IP.
+    Uses Multilogin's partial-update endpoint. Returns the endpoint path that worked."""
+    body = {"profile_id": pid, "proxy": {
+        "host": proxy.get("host"), "type": proxy.get("type"), "port": proxy.get("port"),
+        "username": new_username, "password": proxy.get("password"), "save_traffic": proxy.get("save_traffic", False)}}
+    errors = []
+    for path in ("/profile/partial", "/profile/update"):
+        try:
+            mlx_request("POST", MLX_API + path, body, token=mlx_token())
+            return path
+        except Exception as failure:
+            errors.append(path + ": " + str(failure)[:140])
+    raise Stop("could not write the proxy to the profile — " + " | ".join(errors))
+
+
 def run_ip_probe(profile_name, key):
     """Reads a Multilogin profile's proxy and checks that IP through ipapi.is, WITHOUT opening the browser.
     Proves the IP-quality gate on a real profile before it is wired into warm-up and first launch."""
@@ -1080,6 +1105,23 @@ def run_ip_probe(profile_name, key):
         out["ip_changed_on_reconnect"] = bool(d2.get("ip") and d2.get("ip") != d.get("ip"))
     except Exception as failure:
         out["second_ip_error"] = str(failure)[:160]
+    # Write test: rotate the sid on the profile and confirm the change took AND yields a new IP.
+    # This proves end-to-end headless rotation before it's wired into the live gate.
+    try:
+        new_user = rotate_sid(proxy.get("username") or "")
+        out["write_endpoint"] = mlx_set_proxy(pid, proxy, new_user)
+        meta2 = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [pid]}, token=mlx_token())
+        p2 = (((meta2.get("data") or {}).get("profiles") or [{}])[0].get("parameters") or {}).get("proxy") or {}
+        out["write_took"] = (p2.get("username") == new_user)
+        if p2.get("username"):
+            try:
+                d3 = ipapi_check(p2, key)
+                out["rotated_ip"] = d3.get("ip")
+                out["rotated_changed"] = bool(d3.get("ip") and d3.get("ip") != d.get("ip"))
+            except Exception as failure:
+                out["rotated_ip_error"] = str(failure)[:160]
+    except Exception as failure:
+        out["write_error"] = str(failure)[:220]
     return out
 
 
