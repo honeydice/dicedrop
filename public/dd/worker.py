@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.32.0"
+VERSION = "0.33.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -215,6 +215,7 @@ def address_owner(ip):
 
 checked_addresses = {}
 told_waiting = {}
+ipapi_key_box = ""  # the IP-quality-gate key, read from the heartbeat each time; never stored on disk
 
 
 def direct_ip():
@@ -930,6 +931,75 @@ def mlx_stop(profile):
         mlx_request("GET", MLX_LAUNCHER + "/api/v1/profile/stop/p/" + profile, token=mlx_token(), timeout=90)
     except Exception as failure:
         log("could not stop the Multilogin profile cleanly: " + str(failure)[:200])
+
+
+def ipapi_check(proxy, key):
+    """Checks one IP's quality through a proxy with ipapi.is — no browser involved. Returns the parsed JSON.
+    `proxy` is a {host, port, username, password, type} dict (Multilogin's parameters.proxy shape)."""
+    host = proxy.get("host")
+    if not host:
+        raise Stop("no external proxy host")
+    scheme = "socks5h" if str(proxy.get("type", "")).lower().startswith("socks") else "http"
+    cred = ""
+    if proxy.get("username"):
+        cred = str(proxy["username"]) + ":" + str(proxy.get("password") or "") + "@"
+    px = scheme + "://" + cred + str(host) + ":" + str(proxy.get("port") or "")
+    res = subprocess.run(["curl", "-s", "--max-time", "30", "-x", px, "https://api.ipapi.is?key=" + key],
+                         capture_output=True, text=True, timeout=40)
+    if not res.stdout.strip():
+        raise Stop("ipapi.is returned nothing through the proxy (" + (res.stderr or "no output")[:120] + ")")
+    return json.loads(res.stdout)
+
+
+def ip_verdict(d):
+    """Turns an ipapi.is response into the gate's summary. PASS only if none of the five flags are set."""
+    co = d.get("company") or {}
+    loc = d.get("location") or {}
+    asn = d.get("asn") or {}
+    flags = {k: bool(d.get(k)) for k in ("is_proxy", "is_datacenter", "is_vpn", "is_tor", "is_abuser")}
+    return {
+        "ip": d.get("ip"), "carrier": co.get("name") or asn.get("org"),
+        "is_mobile": d.get("is_mobile"),
+        "city": loc.get("city"), "region": loc.get("state"), "timezone": loc.get("timezone"),
+        "flags": flags, "pass": not any(flags.values()),
+    }
+
+
+def run_ip_probe(profile_name, key):
+    """Reads a Multilogin profile's proxy and checks that IP through ipapi.is, WITHOUT opening the browser.
+    Proves the IP-quality gate on a real profile before it is wired into warm-up and first launch."""
+    out = {"profile": profile_name}
+    try:
+        _folder, pid = mlx_find(profile_name, {"mlx_profile": profile_name})
+    except Exception as failure:
+        out["error"] = "profile not found: " + str(failure)[:220]
+        return out
+    try:
+        meta = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [pid]}, token=mlx_token())
+    except Exception as failure:
+        out["error"] = "could not read the profile's proxy: " + str(failure)[:220]
+        return out
+    profs = (meta.get("data") or {}).get("profiles") or []
+    params = (profs[0].get("parameters") if profs else {}) or {}
+    proxy = params.get("proxy") or {}
+    out["proxy_type"] = proxy.get("type")
+    out["proxy_keys"] = sorted([k for k in proxy.keys() if k != "password"])
+    if not proxy.get("host"):
+        out["proxy_has_host"] = False
+        out["error"] = ("This profile's proxy has no external host/port — Multilogin is keeping the IP inside the "
+                        "browser, so it can't be checked before launch. We'd use a generated Mobile proxy string instead.")
+        return out
+    out["proxy_has_host"] = True
+    if not key:
+        out["error"] = "no ipapi key reached the box"
+        return out
+    try:
+        d = ipapi_check(proxy, key)
+    except Exception as failure:
+        out["error"] = "ipapi.is through the proxy failed: " + str(failure)[:200]
+        return out
+    out.update(ip_verdict(d))
+    return out
 
 
 DEVICE_JS = """() => {
@@ -4233,6 +4303,22 @@ def main():
             state = doing or kameleo_state()
             reply = call("/api/worker/v1/heartbeat", {"version": VERSION, "hostname": socket.gethostname(), "state": state})
             job_lock.resize(reply.get("max_jobs") or 1)
+            global ipapi_key_box
+            if reply.get("ipapi_key"):
+                ipapi_key_box = reply.get("ipapi_key")
+            # A one-off IP-quality probe requested from the console: read the profile's proxy and check the IP
+            # through ipapi.is, without opening the browser. Reports the result back and clears the request.
+            if reply.get("ip_probe"):
+                probe_name = reply.get("ip_probe")
+                try:
+                    res = run_ip_probe(probe_name, ipapi_key_box)
+                except Exception as failure:
+                    res = {"profile": probe_name, "error": str(failure)[:220]}
+                try:
+                    call("/api/worker/v1/ip-probe", res)
+                    log("ip probe for " + str(probe_name) + ": " + json.dumps({k: v for k, v in res.items() if k != "password"})[:240])
+                except Exception as failure:
+                    log("could not report the ip probe: " + str(failure)[:160])
             if reply.get("desired_state") != "pause":
                 for account in reply.get("accounts", []):
                     label = account.get("label")

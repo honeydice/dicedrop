@@ -24,7 +24,9 @@ export async function POST(req: Request) {
 
     const { data, error } = await auth.db.rpc('dd_worker_heartbeat', { p_token: auth.key, p_payload: payload });
     if (error) return fromDbError(error);
-    return NextResponse.json(data);
+    // The IP-quality gate key is never stored in the DB or sent to the console — the box reads it here only.
+    const out = (data && typeof data === 'object' && !Array.isArray(data)) ? { ...data as Record<string, unknown>, ipapi_key: process.env.IPAPI_KEY || null } : data;
+    return NextResponse.json(out);
   } catch {
     return apiError(500, 'server_error', 'Something went wrong.');
   }
