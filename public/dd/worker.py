@@ -18,6 +18,7 @@ import os
 import random
 import socket
 import ssl
+import re
 import subprocess
 import sys
 import threading
@@ -26,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.33.3"
+VERSION = "0.33.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
