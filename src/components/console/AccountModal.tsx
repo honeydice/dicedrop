@@ -52,7 +52,7 @@ function Check({ id, checked, onChange, title, hint }: { id: string; checked: bo
 }
 
 /** Add or edit a buyer account. Saving stores the details only; nothing here signs in to Amazon. */
-export function AccountModal({ account, data, onClose, onSaved }: { account: OpsAccount | null; data: OpsAccounts; onClose: () => void; onSaved: () => void }) {
+export function AccountModal({ account, data, onClose, onSaved, defaultStage }: { account: OpsAccount | null; data: OpsAccounts; onClose: () => void; onSaved: () => void; defaultStage?: 'live' | 'warmup' }) {
   const [tab, setTab] = useState<Tab>('details');
   const [form, setForm] = useState<AccountForm>(() => startingForm(account));
   const [busy, setBusy] = useState(false);
@@ -137,7 +137,8 @@ export function AccountModal({ account, data, onClose, onSaved }: { account: Ops
     setBusy(true);
     setError('');
     try {
-      const result = await saveAccount(account?.id ?? null, form);
+      // A brand-new account created from the Warm up tab starts in the warm-up lane (browse-only).
+      const result = await saveAccount(account?.id ?? null, account ? form : { ...form, stage: defaultStage ?? 'live' });
       if (!result.ok) {
         setError(result.error);
         return;

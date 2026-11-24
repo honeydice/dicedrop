@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.31.9"
+VERSION = "0.32.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3267,12 +3267,23 @@ WARM_SEARCHES = ["desk lamp", "phone charger", "water bottle", "notebook", "kitc
                  "running socks", "usb c cable", "dog toys", "throw pillow", "bluetooth speaker", "garden hose", "tool set", "backpack",
                  "wall clock", "shower curtain", "hand soap", "air fryer", "picture frames", "board games", "yoga mat", "office chair"]
 
+# Sections a shopper wanders into besides search results — digital products, Prime Video, deals, departments.
+WARM_SECTIONS = [
+    ("Today's Deals", "https://www.amazon.com/deals"),
+    ("Prime Video", "https://www.amazon.com/gp/video/storefront"),
+    ("Best Sellers", "https://www.amazon.com/gp/bestsellers"),
+    ("Kindle books", "https://www.amazon.com/Kindle-eBooks/b?node=154606011"),
+    ("Amazon devices", "https://www.amazon.com/amazondevices"),
+    ("New releases", "https://www.amazon.com/gp/new-releases"),
+    ("Digital music", "https://www.amazon.com/music/unlimited"),
+]
+
 
 def warm_up_browse(page, minutes):
     """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
     It never adds to the cart and never goes to checkout. Returns a short summary."""
     ends = time.time() + minutes * 60
-    searched, opened = 0, 0
+    searched, opened, carted, sections = 0, 0, 0, 0
 
     def still_welcome(where):
         # Amazon's "are you a person / I am human" page. The worker never answers it: the session ends here and the account is flagged.
@@ -3288,6 +3299,76 @@ def warm_up_browse(page, minutes):
             except Exception:
                 pass
             pause(1.2, 3.5)
+
+    def add_to_cart():
+        # A shopper sometimes drops a thing in the cart. Never a buy — it is taken back out before the session ends.
+        nonlocal carted
+        try:
+            button = first_visible(page, "#add-to-cart-button, input[name='submit.add-to-cart']")
+            if button is None:
+                return
+            human_move(page, random.uniform(400, 1100), random.uniform(300, 700))
+            pause(0.5, 1.4)
+            button.click(timeout=8000)
+            settle(page)
+            still_welcome("after adding to the cart")
+            carted += 1
+            # Amazon may offer a warranty/sidesheet ("No thanks" / "Skip"): dismiss it, never confirm anything.
+            for sel in ("input[data-action='a-popover-close']", "button[data-action='a-popover-close']",
+                        "#attachSiNoCoverage a", "#siNoCoverage-announce", "[aria-label='Close']"):
+                skip = first_visible(page, sel)
+                if skip is not None:
+                    try:
+                        skip.click(timeout=3000)
+                    except Exception:
+                        pass
+                    break
+            pause(1.0, 2.5)
+        except Stop:
+            raise
+        except Exception:
+            pass
+
+    def clear_cart():
+        # Empty whatever was dropped in. Only ever presses Delete — never Proceed to checkout.
+        if carted <= 0:
+            return
+        try:
+            page.goto("https://www.amazon.com/gp/cart/view.html", wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            still_welcome("in the cart")
+            scroll(1)
+            for _ in range(carted + 3):
+                remove = first_visible(page,
+                    "input[value='Delete'], [data-feature-id='item-delete-button'] input, "
+                    "span[data-action='delete'] input[type='submit'], [aria-label*='Delete'], input[data-action='delete']")
+                if remove is None:
+                    break
+                try:
+                    remove.click(timeout=6000)
+                    settle(page)
+                    pause(0.8, 1.8)
+                except Exception:
+                    break
+        except Stop:
+            raise
+        except Exception:
+            pass
+
+    def browse_section():
+        nonlocal sections
+        name, url = random.choice(WARM_SECTIONS)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            still_welcome("in " + name)
+            sections += 1
+            scroll(random.randint(2, 5))
+            pause(1.5, 4.0)
+        except Stop:
+            raise
+        except Exception:
+            pass
 
     page.goto("https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
     settle(page)
@@ -3341,20 +3422,34 @@ def warm_up_browse(page, minutes):
                 opened += 1
                 scroll(random.randint(3, 7))
                 pause(2.0, 6.0)
+                # Now and then drop it in the cart (taken back out at the end). Never on every product.
+                if random.random() < 0.22:
+                    add_to_cart()
                 page.go_back(wait_until="domcontentloaded", timeout=60000)
                 settle(page)
             except Stop:
                 raise
             except Exception:
                 break
+        # Between searches a shopper sometimes drifts into a section (deals, Prime Video, Kindle, …).
+        if time.time() < ends and random.random() < 0.5:
+            browse_section()
     still_welcome("at the end")
+    # Take back out anything that was dropped in the cart — a warm-up account never keeps a cart or buys.
+    clear_cart()
     try:
         page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
         settle(page)
         scroll(1)
     except Exception:
         pass
-    return "browsed " + str(searched) + " search" + ("" if searched == 1 else "es") + " and " + str(opened) + " product" + ("" if opened == 1 else "s")
+    bits = ["browsed " + str(searched) + " search" + ("" if searched == 1 else "es"),
+            str(opened) + " product" + ("" if opened == 1 else "s")]
+    if sections:
+        bits.append(str(sections) + " section" + ("" if sections == 1 else "s"))
+    if carted:
+        bits.append("added " + str(carted) + " to cart then emptied it")
+    return ", ".join(bits)
 
 
 def warm_up_job(label):

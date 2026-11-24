@@ -295,6 +295,8 @@ export interface AccountForm {
   daily_order_cap: string;
   auto_tracking: boolean;
   order_scan: boolean;
+  /** Which lane a brand-new account starts in: 'warmup' (browse-only) or 'live'. Ignored when editing. */
+  stage?: 'live' | 'warmup';
 }
 
 /** Creates (id null) or updates a buyer account. The password and two-step key are stored encrypted in the database vault. */
@@ -428,6 +430,18 @@ export async function clearHold(id: string): Promise<Result> {
     const ctx = await operatorDb();
     if (!ctx) return DENIED;
     const { error } = await ctx.db.rpc('dd_ops_clear_hold', { p_account: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** Moves an account between lanes: 'live' (order-eligible, on the main page) or 'warmup' (browse-only, on the Warm up tab). */
+export async function setAccountStage(id: string, stage: 'live' | 'warmup'): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_stage', { p_account: id, p_stage: stage });
     return done(error);
   } catch {
     return FAILED;

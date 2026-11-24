@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, removeAccount, setOrdering, setAccountEngine, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, removeAccount, setOrdering, setAccountEngine, setAccountStage, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -33,6 +33,7 @@ function signIn(a: OpsAccount): { text: string; color: string } {
   if (a.session_state === 'needs_sign_in') return { text: 'sign-in needed', color: TONE.warn };
   if (!a.box_id) return { text: 'no vps', color: TONE.muted };
   if (a.box_online !== true) return { text: 'vps offline', color: TONE.bad };
+  if ((a.stage ?? 'live') === 'warmup' && a.session_state === 'signed_in') return { text: 'warm-up · browsing', color: 'rgb(var(--accent))' };
   if (isWarming(a)) return { text: 'warming up', color: 'rgb(var(--accent))' };
   if (a.session_state === 'signed_in') return { text: 'signed in', color: TONE.good };
   return { text: 'not signed in yet', color: TONE.muted };
@@ -47,6 +48,15 @@ function warmupLeft(a: OpsAccount): string {
   const hours = Math.max(1, Math.round((new Date(a.warmup_until as string).getTime() - Date.now()) / 3600000));
   const left = hours >= 24 ? `${Math.round(hours / 24)}d left` : `${hours}h left`;
   return `${left} · ${a.warmup_sessions ?? 0} session${(a.warmup_sessions ?? 0) === 1 ? '' : 's'}`;
+}
+
+/** Warm-up lane summary: how many sessions it has done and when the next one is due. */
+function warmSummary(a: OpsAccount): string {
+  if ((a.stage ?? 'live') !== 'warmup') return warmupLeft(a);
+  const n = a.warmup_sessions ?? 0;
+  const next = a.warmup_next_at ? new Date(a.warmup_next_at) : null;
+  const when = !next ? 'scheduling' : next.getTime() <= Date.now() ? 'due now' : `next ${next.toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+  return `${n} session${n === 1 ? '' : 's'} · ${when}`;
 }
 
 function tone(a: OpsAccount): string {
@@ -85,6 +95,8 @@ function Rows({ items }: { items: [string, string][] }) {
 export function AccountsView({ initial, initialError }: { initial: OpsAccounts; initialError: string }) {
   const { data, error, setError, refresh } = useLive<OpsAccounts>('dd_ops_accounts', undefined, initial, initialError);
   const now = useNow();
+  // The two lanes: live (order-eligible, the default) and warm-up (browse-only).
+  const [view, setView] = useState<'live' | 'warmup'>('live');
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState('');
   // Accounts are grouped into one folder per supplier. One folder is open at a time.
@@ -169,7 +181,10 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   );
 
   const suppliers = Array.from(new Set(['amazon', ...data.accounts.map((a) => a.supplier || 'amazon')])).sort();
+  const liveCount = data.accounts.filter((a) => (a.stage ?? 'live') === 'live').length;
+  const warmupCount = data.accounts.filter((a) => (a.stage ?? 'live') === 'warmup').length;
   const rows = data.accounts.filter((a) => {
+    if ((a.stage ?? 'live') !== view) return false;
     if ((a.supplier || 'amazon') !== folder) return false;
     if (filter === 'ready') return isReady(a);
     if (filter === 'attention') return needsAttention(a);
@@ -178,7 +193,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     return true;
   });
 
-  const { shown, pager } = usePaged(rows, `${folder}:${filter}`);
+  const { shown, pager } = usePaged(rows, `${view}:${folder}:${filter}`);
   const ordersToday = data.accounts.reduce((sum, a) => sum + Number(a.orders_today), 0);
   const capacity = data.accounts.filter((a) => a.status === 'active' || a.status === 'warming').reduce((sum, a) => sum + Number(a.daily_order_cap), 0);
 
@@ -196,6 +211,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           key={editId || 'new'}
           account={data.accounts.find((x) => x.id === editId) ?? null}
           data={data}
+          defaultStage={view}
           onClose={() => {
             setAdding(false);
             setEditId('');
@@ -224,6 +240,31 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             <img src={`data:image/jpeg;base64,${shot.image}`} alt={`What the worker saw on ${shot.label}`} className="block w-full" />
           </div>
         </div>
+      ) : null}
+
+      <div role="tablist" aria-label="Account lane" className="mb-5 flex gap-2">
+        {([['live', 'Active accounts', liveCount], ['warmup', 'Warm up', warmupCount]] as [typeof view, string, number][]).map(([v, label, n]) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => { setView(v); setFilter('all'); setOpen(''); }}
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border px-4 text-sm font-semibold"
+            style={view === v
+              ? { background: 'rgb(var(--accent))', borderColor: 'rgb(var(--accent))', color: '#0b0b0b' }
+              : { background: 'transparent', borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
+          >
+            {label}
+            <span className="rounded-full px-[7px] py-0.5 font-mono text-xs" style={view === v ? { background: 'rgba(0,0,0,.18)' } : { background: 'var(--chip)' }}>{n}</span>
+          </button>
+        ))}
+      </div>
+
+      {view === 'warmup' ? (
+        <p className="mb-4 text-[13px] text-muted">
+          Warm-up accounts only ever browse Amazon — searching, reading, wandering sections, adding to cart and emptying it — on a rotating schedule. They are never handed an order until you move one to live.
+        </p>
       ) : null}
 
       <section aria-label="Account health" className="mb-5 flex flex-wrap gap-3">
@@ -399,16 +440,27 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                 <div className="border-t border-divider bg-raised/30 px-3 py-4 sm:px-6 sm:py-5">
                   {/* One row of controls: the ordering switch, one Actions menu, and the live browser link when it is open. */}
                   <div className="mb-4 flex flex-wrap items-center gap-2.5">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      aria-pressed={a.ordering_enabled !== false}
-                      className={btn}
-                      style={a.ordering_enabled === false ? { borderColor: TONE.warn, color: TONE.warn } : { borderColor: TONE.good, color: TONE.good }}
-                      onClick={() => void run(() => setOrdering(a.id, a.ordering_enabled === false))}
-                    >
-                      {a.ordering_enabled === false ? 'Ordering: OFF · checks only' : 'Ordering: ON'}
-                    </button>
+                    {(a.stage ?? 'live') === 'warmup' ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className={btnAccent}
+                        onClick={() => { if (window.confirm(`Move ${a.label} to live? It becomes eligible for orders and moves to the Active accounts tab.`)) void run(() => setAccountStage(a.id, 'live')); }}
+                      >
+                        Move to live →
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        aria-pressed={a.ordering_enabled !== false}
+                        className={btn}
+                        style={a.ordering_enabled === false ? { borderColor: TONE.warn, color: TONE.warn } : { borderColor: TONE.good, color: TONE.good }}
+                        onClick={() => void run(() => setOrdering(a.id, a.ordering_enabled === false))}
+                      >
+                        {a.ordering_enabled === false ? 'Ordering: OFF · checks only' : 'Ordering: ON'}
+                      </button>
+                    )}
                     <select
                       aria-label={`Actions for ${a.label}`}
                       disabled={busy}
@@ -422,6 +474,8 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         else if (choice === 'browser') void run(() => setLiveBrowser(a.id, !a.browser_state));
                         else if (choice === 'pause') void patch(a.id, { status: a.status === 'paused' ? 'active' : 'paused' });
                         else if (choice === 'hold') void run(() => clearHold(a.id));
+                        else if (choice === 'tolive') void run(() => setAccountStage(a.id, 'live'));
+                        else if (choice === 'towarmup') void run(() => setAccountStage(a.id, 'warmup'));
                         else if (choice.startsWith('warm:')) void run(() => setWarmup(a.id, Number(choice.slice(5))));
                         else if (choice === 'kameleo') void run(() => setAccountEngine(a.id, 'kameleo', ''));
                         else if (choice === 'multilogin') {
@@ -475,6 +529,9 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         <option value="multilogin">{a.engine === 'multilogin' ? 'Change Multilogin profile' : 'Switch to Multilogin'}</option>
                       </optgroup>
                       <optgroup label="Account">
+                        {(a.stage ?? 'live') === 'warmup'
+                          ? <option value="tolive">Move to live (allow orders)</option>
+                          : <option value="towarmup">Move to warm up (browse only)</option>}
                         {a.hold_reason ? <option value="hold">Account verified · clear hold</option> : null}
                         <option value="pause">{a.status === 'paused' ? 'Resume account' : 'Pause account (nothing opens it)'}</option>
                         <option value="remove">Remove account</option>
@@ -530,7 +587,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         items={[
                           ['sign-in', `${sessionLabel(a.session_state)}${a.last_seen_at && now ? ` · seen ${timeAgo(a.last_seen_at, now)}` : ''}`],
                           ['ordering', a.ordering_enabled === false ? 'off · order checks only' : isWarming(a) ? 'waiting for warm-up to end' : a.status === 'paused' ? 'paused' : 'on'],
-                          ['warm-up', warmupLeft(a)],
+                          ['warm-up', warmSummary(a)],
                           ['waiting to ship', `${a.awaiting_tracking}${a.max_pending_orders ? ` of ${a.max_pending_orders}` : ''}`],
                           ['open issues · all orders', `${a.open_issues} · ${a.orders_total}`],
                           ['spent today', `${money(Number(a.spent_today))}${a.daily_spend_cap ? ` of ${money(Number(a.daily_spend_cap))}` : ''}`],
