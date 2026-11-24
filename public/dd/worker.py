@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.34.2"
+VERSION = "0.34.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1046,9 +1046,9 @@ def rotate_sid(username):
     return (username or "") + "-sid-" + token
 
 
-def mlx_set_proxy(pid, params, new_username):
+def mlx_set_proxy(pid, name, params, new_username):
     """Write a changed session username onto a profile so it launches on that vetted IP. POST /profile/update
-    with the profile's OWN full parameters (so every required flag like audio_masking is present), changing only
+    with the profile's OWN name + full parameters (so every required field/flag is present), changing only
     proxy.username and forcing proxy_masking=custom so our session token is honoured."""
     params = dict(params or {})
     proxy = dict(params.get("proxy") or {})
@@ -1059,7 +1059,7 @@ def mlx_set_proxy(pid, params, new_username):
     flags["proxy_masking"] = "custom"
     params["flags"] = flags
     try:
-        mlx_request("POST", MLX_API + "/profile/update", {"profile_id": pid, "parameters": params}, token=mlx_token())
+        mlx_request("POST", MLX_API + "/profile/update", {"profile_id": pid, "name": name or "profile", "parameters": params}, token=mlx_token())
         return "/profile/update"
     except Exception as failure:
         raise Stop("could not write the proxy to the profile via /profile/update: " + str(failure)[:220])
@@ -1114,7 +1114,7 @@ def run_ip_probe(profile_name, key):
     # This proves end-to-end headless rotation before it's wired into the live gate.
     try:
         new_user = rotate_sid(proxy.get("username") or "")
-        out["write_endpoint"] = mlx_set_proxy(pid, params, new_user)
+        out["write_endpoint"] = mlx_set_proxy(pid, (profs[0] if profs else {}).get("name"), params, new_user)
         meta2 = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [pid]}, token=mlx_token())
         p2 = (((meta2.get("data") or {}).get("profiles") or [{}])[0].get("parameters") or {}).get("proxy") or {}
         out["write_took"] = (p2.get("username") == new_user)
@@ -1178,7 +1178,8 @@ def ip_gate_open(label, secrets, reason):
     try:
         _folder, pid = mlx_find(label, secrets)
         meta = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [pid]}, token=mlx_token())
-        gate_params = (((meta.get("data") or {}).get("profiles") or [{}])[0].get("parameters") or {})
+        gate_prof = (((meta.get("data") or {}).get("profiles") or [{}])[0])
+        gate_params = gate_prof.get("parameters") or {}
         proxy = gate_params.get("proxy") or {}
     except Exception as failure:
         log("ip gate could not read the proxy for " + label + ": " + str(failure)[:160])
@@ -1232,7 +1233,7 @@ def ip_gate_open(label, secrets, reason):
             d["tried"] = attempt + 1
             if attempt_user != current_user:
                 try:
-                    mlx_set_proxy(pid, gate_params, attempt_user)
+                    mlx_set_proxy(pid, gate_prof.get("name"), gate_params, attempt_user)
                 except Exception as failure:
                     log("ip gate could not save the winning proxy for " + label + ": " + str(failure)[:160])
                     return False, "Found a clean IP but could not save it to the profile. Not opened."
