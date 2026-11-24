@@ -17,6 +17,7 @@ import json
 import os
 import random
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -25,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.33.0"
+VERSION = "0.33.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -933,22 +934,91 @@ def mlx_stop(profile):
         log("could not stop the Multilogin profile cleanly: " + str(failure)[:200])
 
 
+def _recvn(sock, n):
+    """Read exactly n bytes from a socket (SOCKS5 control messages are tiny but can arrive in pieces)."""
+    data = b""
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def _socks5_https_get(host, port, user, pwd, target_host, path):
+    """Tunnel an HTTPS GET to target_host through a SOCKS5 proxy (with username/password auth, RFC 1929).
+    Pure stdlib — the worker image has no curl and Playwright can't auth SOCKS5. Returns the raw response text."""
+    sock = socket.create_connection((host, int(port)), timeout=30)
+    try:
+        # greet, offering username/password (0x02) and no-auth (0x00)
+        sock.sendall(b"\x05\x02\x00\x02")
+        hello = _recvn(sock, 2)
+        if len(hello) < 2:
+            raise Stop("socks5 proxy gave no greeting")
+        if hello[1] == 0x02:
+            u, p = user.encode(), pwd.encode()
+            sock.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
+            ar = _recvn(sock, 2)
+            if len(ar) < 2 or ar[1] != 0x00:
+                raise Stop("socks5 proxy rejected the username/password")
+        elif hello[1] != 0x00:
+            raise Stop("socks5 proxy wants auth method " + str(hello[1]) + ", which isn't supported")
+        # CONNECT to target_host:443 as a domain name
+        th = target_host.encode()
+        sock.sendall(b"\x05\x01\x00\x03" + bytes([len(th)]) + th + (443).to_bytes(2, "big"))
+        rep = _recvn(sock, 4)
+        if len(rep) < 4 or rep[1] != 0x00:
+            raise Stop("socks5 CONNECT failed (reply " + (str(rep[1]) if len(rep) > 1 else "short") + ")")
+        atyp = rep[3]
+        if atyp == 0x01:
+            _recvn(sock, 6)
+        elif atyp == 0x03:
+            ln = _recvn(sock, 1)
+            _recvn(sock, (ln[0] if ln else 0) + 2)
+        elif atyp == 0x04:
+            _recvn(sock, 18)
+        # TLS over the tunnel, then a plain HTTP/1.1 GET
+        tls = ssl.create_default_context().wrap_socket(sock, server_hostname=target_host)
+        tls.sendall(("GET " + path + " HTTP/1.1\r\nHost: " + target_host +
+                     "\r\nUser-Agent: dd-worker\r\nAccept: application/json\r\nConnection: close\r\n\r\n").encode())
+        buf = b""
+        while True:
+            chunk = tls.recv(8192)
+            if not chunk:
+                break
+            buf += chunk
+            if len(buf) > 262144:
+                break
+        return buf.decode(errors="replace")
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
 def ipapi_check(proxy, key):
     """Checks one IP's quality through a proxy with ipapi.is — no browser involved. Returns the parsed JSON.
     `proxy` is a {host, port, username, password, type} dict (Multilogin's parameters.proxy shape)."""
     host = proxy.get("host")
     if not host:
         raise Stop("no external proxy host")
-    scheme = "socks5h" if str(proxy.get("type", "")).lower().startswith("socks") else "http"
-    cred = ""
-    if proxy.get("username"):
-        cred = str(proxy["username"]) + ":" + str(proxy.get("password") or "") + "@"
-    px = scheme + "://" + cred + str(host) + ":" + str(proxy.get("port") or "")
-    res = subprocess.run(["curl", "-s", "--max-time", "30", "-x", px, "https://api.ipapi.is?key=" + key],
-                         capture_output=True, text=True, timeout=40)
-    if not res.stdout.strip():
-        raise Stop("ipapi.is returned nothing through the proxy (" + (res.stderr or "no output")[:120] + ")")
-    return json.loads(res.stdout)
+    port = proxy.get("port") or 0
+    user = str(proxy.get("username") or "")
+    pwd = str(proxy.get("password") or "")
+    path = "/?key=" + key
+    target = "api.ipapi.is"
+    if str(proxy.get("type", "")).lower().startswith("socks"):
+        raw = _socks5_https_get(host, port, user, pwd, target, path)
+    else:
+        auth = (user + ":" + pwd + "@") if user else ""
+        purl = "http://" + auth + str(host) + ":" + str(port)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": purl, "https": purl}))
+        req = urllib.request.Request("https://" + target + path, headers={"User-Agent": "dd-worker"})
+        raw = opener.open(req, timeout=30).read().decode(errors="replace")
+    if "{" not in raw or "}" not in raw:
+        raise Stop("ipapi.is returned no JSON through the proxy (" + raw[:120] + ")")
+    return json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
 
 
 def ip_verdict(d):
