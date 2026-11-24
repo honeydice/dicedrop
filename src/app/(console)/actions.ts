@@ -436,6 +436,30 @@ export async function clearHold(id: string): Promise<Result> {
   }
 }
 
+/** IP-quality gate settings: master on/off, whether it also runs before orders, and the daily ipapi.is budget. */
+export async function setIpGate(enabled: boolean, beforeOrders: boolean, budget: number): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_ip_gate', { p_enabled: enabled, p_before_orders: beforeOrders, p_budget: budget });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/** Sets an account's optional IP target location (state or "City, State") used to steer its first mobile IP. */
+export async function setIpTarget(id: string, target: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_ip_target', { p_account: id, p_target: target });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Moves an account between lanes: 'live' (order-eligible, on the main page) or 'warmup' (browse-only, on the Warm up tab). */
 export async function setAccountStage(id: string, stage: 'live' | 'warmup' | 'archived'): Promise<Result> {
   try {

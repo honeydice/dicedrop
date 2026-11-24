@@ -197,6 +197,10 @@ export interface OpsAccount {
   warmup_sessions?: number;
   warmup_next_at?: string | null;
   stage?: 'live' | 'warmup' | 'archived';
+  ip_last?: { ip?: string; carrier?: string; is_mobile?: boolean; pass?: boolean; tried?: number; region?: string; city?: string } | null;
+  ip_target_location?: string | null;
+  ip_home_carrier?: string | null;
+  ip_home_region?: string | null;
   password_set: boolean;
   awaiting_tracking: number;
   signin_requested_at: string | null;
@@ -220,6 +224,7 @@ export interface OpsAccounts {
   boxes: Named[];
   clients: Named[];
   cards: OpsCard[];
+  ip_gate?: { enabled: boolean; before_orders: boolean; budget: number; used: number } | null;
 }
 
 export interface OpsProxy {

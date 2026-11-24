@@ -19,6 +19,7 @@ import random
 import socket
 import ssl
 import re
+import hashlib
 import subprocess
 import sys
 import threading
@@ -27,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.33.4"
+VERSION = "0.34.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1126,6 +1127,124 @@ def run_ip_probe(profile_name, key):
     return out
 
 
+def _ip_key(username):
+    return hashlib.sha256(("ipgate:" + (username or "")).encode()).hexdigest()[:40]
+
+
+def _slug(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _apply_target(username, target):
+    """On first launch, steer the mobile session to a target location by rewriting the username's -region-/-city-."""
+    if not target:
+        return username
+    parts = [p.strip() for p in str(target).split(",")]
+    city = _slug(parts[0]) if len(parts) > 1 else ""
+    region = _slug(parts[-1])
+    u = username
+    if region:
+        u = re.sub(r"-region-[^-]+", "-region-" + region, u) if "-region-" in u else u + "-region-" + region
+    if city:
+        u = re.sub(r"-city-[^-]+", "-city-" + city, u) if "-city-" in u else u + "-city-" + city
+    return u
+
+
+def should_ip_gate(reason, before_orders):
+    """Which opens the gate guards: warm-up and first sign-in always; orders/checks only if the operator chose to."""
+    if reason == "manual browser":
+        return False
+    if reason.startswith("warm") or reason == "sign-in":
+        return True
+    return bool(before_orders)
+
+
+def ip_gate_open(label, secrets, reason):
+    """Before a Multilogin profile opens, make sure its mobile IP reads clean on ipapi.is (not proxy/datacenter/
+    vpn/tor/abuser). Rotate the session token (sid) up to 10 times to find a clean one, match it to the account's
+    home carrier/region, write the winner onto the profile, and only then allow the open. Returns (ok, note)."""
+    try:
+        ctx = call("/api/worker/v1/ip-gate", {"op": "ctx", "account": label})
+    except Exception as failure:
+        log("ip gate ctx failed for " + label + ": " + str(failure)[:160])
+        return True, ""  # never block an open because the gate's own plumbing hiccuped
+    if not ctx.get("on") or not should_ip_gate(reason, ctx.get("before_orders")):
+        return True, ""
+    if not ipapi_key_box:
+        return True, ""
+    try:
+        _folder, pid = mlx_find(label, secrets)
+        meta = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [pid]}, token=mlx_token())
+        proxy = (((meta.get("data") or {}).get("profiles") or [{}])[0].get("parameters") or {}).get("proxy") or {}
+    except Exception as failure:
+        log("ip gate could not read the proxy for " + label + ": " + str(failure)[:160])
+        return True, ""  # can't read it (not a Multilogin-managed proxy?) — don't block the open
+    current_user = proxy.get("username") or ""
+    if not current_user or not proxy.get("host"):
+        return True, ""
+    has_home = bool(ctx.get("has_home"))
+    home_carrier = (ctx.get("home_carrier") or "").strip().lower()
+    home_region = (ctx.get("home_region") or "").strip().lower()
+    base_user = current_user
+    if not has_home and ctx.get("target_location"):
+        base_user = _apply_target(base_user, ctx.get("target_location"))
+    attempt_user = base_user
+    d = {}
+    for attempt in range(10):
+        test_proxy = dict(proxy)
+        test_proxy["username"] = attempt_user
+        cached = None
+        try:
+            cg = call("/api/worker/v1/ip-gate", {"op": "cache_get", "key": _ip_key(attempt_user)})
+            if cg.get("fresh"):
+                cached = cg
+        except Exception:
+            pass
+        if cached is not None:
+            d = cached.get("result") or {}
+            passed = cached.get("pass")
+        else:
+            try:
+                con = call("/api/worker/v1/ip-gate", {"op": "consume"})
+            except Exception:
+                con = {"ok": True}
+            if not con.get("ok"):
+                return False, "IP checks reached today's budget (" + str(con.get("budget")) + "). This account is waiting for IP checks until the daily reset."
+            try:
+                d = ip_verdict(ipapi_check(test_proxy, ipapi_key_box))
+            except Exception as failure:
+                return False, "IP not checked (ipapi.is error: " + str(failure)[:120] + "). Not opened; will retry."
+            passed = d.get("pass")
+            try:
+                call("/api/worker/v1/ip-gate", {"op": "cache_put", "key": _ip_key(attempt_user), "pass": bool(passed), "result": d})
+            except Exception:
+                pass
+        matches = True
+        if has_home:
+            cc = (d.get("carrier") or "").strip().lower()
+            cr = (d.get("region") or "").strip().lower()
+            matches = (not home_carrier or cc == home_carrier) and (not home_region or cr == home_region)
+        if passed and matches:
+            d["tried"] = attempt + 1
+            if attempt_user != current_user:
+                try:
+                    mlx_set_proxy(pid, proxy, attempt_user)
+                except Exception as failure:
+                    log("ip gate could not save the winning proxy for " + label + ": " + str(failure)[:160])
+                    return False, "Found a clean IP but could not save it to the profile. Not opened."
+            try:
+                call("/api/worker/v1/ip-gate", {"op": "result", "account": label, "result": d, "outcome": "pass"})
+            except Exception:
+                pass
+            return True, ""
+        attempt_user = rotate_sid(base_user)
+    try:
+        call("/api/worker/v1/ip-gate", {"op": "result", "account": label, "result": {"tried": 10, "pass": False, "last": d}, "outcome": "help"})
+    except Exception:
+        pass
+    return False, "No clean mobile IP after 10 tries. Marked for help; not opened."
+
+
 DEVICE_JS = """() => {
   let gl = '';
   try {
@@ -1211,6 +1330,12 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
         box_ip = direct_ip()
         mlx_endpoint = ""
         if engine == "multilogin":
+            # IP-quality gate: check (and if needed rotate) the mobile IP before the browser ever opens.
+            stage[0] = "checking the IP"
+            note("checking the IP")
+            gate_ok, gate_note = ip_gate_open(label, secrets, reason)
+            if not gate_ok:
+                raise Stop(gate_note)
             stage[0] = "opening the Multilogin profile"
             note("opening the Multilogin profile")
             profile_id, mlx_endpoint = mlx_start(label, secrets)
