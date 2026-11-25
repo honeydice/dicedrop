@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.34.3"
+VERSION = "0.34.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -999,17 +999,15 @@ def _socks5_https_get(host, port, user, pwd, target_host, path):
             pass
 
 
-def ipapi_check(proxy, key):
-    """Checks one IP's quality through a proxy with ipapi.is — no browser involved. Returns the parsed JSON.
-    `proxy` is a {host, port, username, password, type} dict (Multilogin's parameters.proxy shape)."""
+def _proxy_get_json(proxy, target, path):
+    """GET https://<target><path> through the proxy and parse the JSON body. `proxy` is Multilogin's
+    parameters.proxy shape {host, port, username, password, type}."""
     host = proxy.get("host")
     if not host:
         raise Stop("no external proxy host")
     port = proxy.get("port") or 0
     user = str(proxy.get("username") or "")
     pwd = str(proxy.get("password") or "")
-    path = "/?key=" + key
-    target = "api.ipapi.is"
     if str(proxy.get("type", "")).lower().startswith("socks"):
         raw = _socks5_https_get(host, port, user, pwd, target, path)
     else:
@@ -1019,8 +1017,19 @@ def ipapi_check(proxy, key):
         req = urllib.request.Request("https://" + target + path, headers={"User-Agent": "dd-worker"})
         raw = opener.open(req, timeout=30).read().decode(errors="replace")
     if "{" not in raw or "}" not in raw:
-        raise Stop("ipapi.is returned no JSON through the proxy (" + raw[:120] + ")")
+        raise Stop("no JSON from " + target + " through the proxy (" + raw[:120] + ")")
     return json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+
+
+def ipapi_check(proxy, key):
+    """Checks one IP's quality through a proxy with ipapi.is (a paid call — counts against the budget)."""
+    return _proxy_get_json(proxy, "api.ipapi.is", "/?key=" + key)
+
+
+def proxy_exit_ip(proxy):
+    """Reads just the current exit IP through the proxy, free (ipify — no ipapi.is credit). Used to skip the
+    paid quality check when the IP hasn't changed since it was last cleared."""
+    return (_proxy_get_json(proxy, "api.ipify.org", "/?format=json") or {}).get("ip")
 
 
 def ip_verdict(d):
@@ -1198,13 +1207,21 @@ def ip_gate_open(label, secrets, reason):
     for attempt in range(10):
         test_proxy = dict(proxy)
         test_proxy["username"] = attempt_user
-        cached = None
+        # First read the exit IP for FREE (ipify — no ipapi.is credit). If this exact IP was already
+        # cleared recently, skip the paid quality check entirely. Multilogin can change the IP on its own
+        # under the same session, so we key on the IP, not the session token.
         try:
-            cg = call("/api/worker/v1/ip-gate", {"op": "cache_get", "key": _ip_key(attempt_user)})
-            if cg.get("fresh"):
-                cached = cg
-        except Exception:
-            pass
+            cur_ip = proxy_exit_ip(test_proxy)
+        except Exception as failure:
+            return False, "Couldn't read the proxy's IP. Not opened; will retry. (" + str(failure)[:100] + ")"
+        cached = None
+        if cur_ip:
+            try:
+                cg = call("/api/worker/v1/ip-gate", {"op": "cache_get", "key": cur_ip})
+                if cg.get("fresh"):
+                    cached = cg
+            except Exception:
+                pass
         if cached is not None:
             d = cached.get("result") or {}
             passed = cached.get("pass")
@@ -1220,10 +1237,11 @@ def ip_gate_open(label, secrets, reason):
             except Exception as failure:
                 return False, "IP not checked (ipapi.is error: " + str(failure)[:120] + "). Not opened; will retry."
             passed = d.get("pass")
-            try:
-                call("/api/worker/v1/ip-gate", {"op": "cache_put", "key": _ip_key(attempt_user), "pass": bool(passed), "result": d})
-            except Exception:
-                pass
+            if d.get("ip"):
+                try:
+                    call("/api/worker/v1/ip-gate", {"op": "cache_put", "key": d.get("ip"), "pass": bool(passed), "result": d})
+                except Exception:
+                    pass
         matches = True
         if has_home:
             cc = (d.get("carrier") or "").strip().lower()
