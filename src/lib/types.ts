@@ -196,6 +196,10 @@ export interface OpsAccount {
   warmup_last_at?: string | null;
   warmup_sessions?: number;
   warmup_next_at?: string | null;
+  /** Google warmth gauge: 'clean' = Google let it search with no captcha (warm), 'captcha' = challenged (cold). */
+  warm_google?: 'clean' | 'captcha' | null;
+  /** Consecutive clean-Google sessions — higher = more convincingly warm / closer to graduation-ready. */
+  warm_google_streak?: number;
   stage?: 'live' | 'warmup' | 'archived';
   ip_last?: { ip?: string; carrier?: string; is_mobile?: boolean; pass?: boolean; tried?: number; region?: string; city?: string } | null;
   ip_target_location?: string | null;

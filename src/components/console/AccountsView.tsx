@@ -56,7 +56,17 @@ function warmSummary(a: OpsAccount): string {
   const n = a.warmup_sessions ?? 0;
   const next = a.warmup_next_at ? new Date(a.warmup_next_at) : null;
   const when = !next ? 'scheduling' : next.getTime() <= Date.now() ? 'due now' : `next ${next.toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
-  return `${n} session${n === 1 ? '' : 's'} · ${when}`;
+  return `${n} session${n === 1 ? '' : 's'} · ${when}${googleWarmth(a)}`;
+}
+
+/** Google warmth tag for the row: Google is the strict gate, so a clean search = a warm, real-looking browser. */
+function googleWarmth(a: OpsAccount): string {
+  if (a.warm_google === 'clean') {
+    const s = a.warm_google_streak ?? 0;
+    return s >= 3 ? ` · Google ✓ warm (${s})` : ' · Google ✓';
+  }
+  if (a.warm_google === 'captcha') return ' · Google captcha (cold)';
+  return '';
 }
 
 /** One-line summary of the account's last IP-gate check. */

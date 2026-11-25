@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.36.0"
+VERSION = "0.36.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3733,6 +3733,10 @@ SEARCH_ENGINES = [
     ("YouTube", "https://www.youtube.com/results?search_query=", "https://www.youtube.com/"),
 ]
 
+# Filled by the arrival helpers each session. Google is the strictest bot gate, so whether it lets the profile
+# search without a captcha is a strong "how warm/real does this browser look" signal: 'clean' = warm, 'captcha' = cold.
+warm_signal = {}
+
 
 def search_blocked(page):
     """True when a search engine is showing its own captcha / "unusual traffic" wall rather than results."""
@@ -3917,10 +3921,12 @@ def warm_up_browse(page, minutes, signed_in=True):
 
     # Vary how the session arrives so it isn't the same path every time: about half through a search engine
     # (Google/Bing, falling back to DuckDuckGo/YouTube on a captcha, carrying a real referrer), the rest direct
-    # like a returning shopper (typed address / bookmark / app) landing on a varied page.
+    # like a returning shopper. About a third of the time, lead with Google to gauge the profile's warmth.
+    warm_signal.clear()
+    lead_google = random.random() < 0.34
     term = random.choice(WARM_SEARCHES)
-    if random.random() < 0.55:
-        entry = enter_amazon_via_search(page, term) or "the web"
+    if lead_google or random.random() < 0.55:
+        entry = arrive_via_search(page, term, "https://www.amazon.com/", "https://www.amazon.com/s?k=", "amazon.com/", lead_google=lead_google) or "the web"
     else:
         entry = enter_amazon_direct(page, term)
     settle(page)
@@ -4040,20 +4046,31 @@ def walmart_blocked(page):
     return False
 
 
-def arrive_via_search(page, term, dest_home, dest_search, dest_host):
+def arrive_via_search(page, term, dest_home, dest_search, dest_host, lead_google=False):
     """Generic store-arrival via a search engine (Google/Bing first, falling back to DuckDuckGo/YouTube on a
-    captcha), landing on the store with the engine as referrer. Returns the engine name used, or ''."""
+    captcha), landing on the store with the engine as referrer. Records the Google gauge in warm_signal.
+    With lead_google it tries Google first so the gauge is measured. Returns the engine name used, or ''."""
     order = SEARCH_ENGINES[:]
-    if random.random() < 0.5:
+    if lead_google:
+        order = sorted(order, key=lambda e: 0 if e[0] == "Google" else 1)
+    elif random.random() < 0.5:
         order = [order[1], order[0]] + order[2:]
-    used, referer = "", ""
+    used, referer, tried = "", "", {}
+
+    def record():
+        g = tried.get("Google")  # False = searched clean, True = captcha'd, None = not tried this session
+        warm_signal["google"] = "clean" if g is False else ("captcha" if g is True else warm_signal.get("google"))
+        warm_signal["engine"] = used or warm_signal.get("engine", "")
+
     for name, search_url, home in order:
         try:
             page.goto(search_url + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=60000)
             settle(page)
         except Exception:
             continue
-        if search_blocked(page):
+        blocked = search_blocked(page)
+        tried[name] = blocked
+        if blocked:
             continue
         used, referer = name, home
         try:
@@ -4070,10 +4087,12 @@ def arrive_via_search(page, term, dest_home, dest_search, dest_host):
                 page.wait_for_load_state("domcontentloaded", timeout=60000)
                 settle(page)
                 if dest_host in (page.url or ""):
+                    record()
                     return used
         except Exception:
             pass
         break
+    record()
     target = (dest_search + term.replace(" ", "+")) if used else dest_home
     try:
         if referer:
@@ -4147,10 +4166,12 @@ def walmart_warm_up_browse(page, minutes):
         except Exception:
             pass
 
-    # Arrive: ~55% via a search engine, ~45% direct with a varied landing.
+    # Arrive: ~55% via a search engine, ~45% direct. About a third of the time lead with Google to gauge warmth.
+    warm_signal.clear()
+    lead_google = random.random() < 0.34
     term = random.choice(WALMART_SEARCHES)
-    if random.random() < 0.55:
-        entry = arrive_via_search(page, term, WALMART_HOME, WALMART_SEARCH, "walmart.com/") or "the web"
+    if lead_google or random.random() < 0.55:
+        entry = arrive_via_search(page, term, WALMART_HOME, WALMART_SEARCH, "walmart.com/", lead_google=lead_google) or "the web"
     else:
         name, url = random.choice([("direct (home)", WALMART_HOME), ("direct (deals)", "https://www.walmart.com/shop/deals"),
                                    ("direct (search)", WALMART_SEARCH + term.replace(" ", "+"))])
@@ -4250,6 +4271,7 @@ def walmart_warm_up_browse(page, minutes):
 
 def warm_up_job(label):
     problem = ""
+    warm_signal.clear()
     try:
         current_job["text"] = "warming up " + label
 
@@ -4283,7 +4305,7 @@ def warm_up_job(label):
         problem = "The warm-up could not run: " + str(failure)[:200]
     finally:
         try:
-            call("/api/worker/v1/accounts/warmed", {"account": label, "error": problem})
+            call("/api/worker/v1/accounts/warmed", {"account": label, "error": problem, "google": warm_signal.get("google")})
         except Exception as failure:
             log("could not record the warm-up: " + str(failure)[:200])
         current_job["text"] = ""

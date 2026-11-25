@@ -21,7 +21,12 @@ export async function POST(req: Request) {
     const account = typeof body.account === 'string' ? body.account.trim() : '';
     if (!account) return apiError(422, 'missing_fields', 'Send the account label as "account".');
 
-    const { data, error } = await auth.db.rpc('dd_worker_warmup_done', { p_token: auth.key, p_label: account, p_error: typeof body.error === 'string' ? body.error.slice(0, 400) : null });
+    const { data, error } = await auth.db.rpc('dd_worker_warmup_done', {
+      p_token: auth.key,
+      p_label: account,
+      p_error: typeof body.error === 'string' ? body.error.slice(0, 400) : null,
+      p_google: body.google === 'clean' || body.google === 'captcha' ? body.google : null,
+    });
     if (error) return fromDbError(error);
     return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
