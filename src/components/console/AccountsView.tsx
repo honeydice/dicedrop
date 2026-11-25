@@ -381,9 +381,20 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       </div>
 
       {view === 'warmup' ? (() => {
-        const active = data.accounts
-          .filter((a) => (a.stage ?? 'live') === 'warmup' && a.activity && a.activity_at && now && now - new Date(a.activity_at).getTime() < 180000)
+        const warm = data.accounts.filter((a) => (a.stage ?? 'live') === 'warmup');
+        const active = warm
+          .filter((a) => a.activity && a.activity_at && now && now - new Date(a.activity_at as string).getTime() < 180000)
           .sort((a, b) => new Date(b.activity_at as string).getTime() - new Date(a.activity_at as string).getTime());
+        const activeIds = new Set(active.map((a) => a.id));
+        const nextUp = warm
+          .filter((a) => a.warmup_next_at && !activeIds.has(a.id) && a.status !== 'paused')
+          .sort((a, b) => new Date(a.warmup_next_at as string).getTime() - new Date(b.warmup_next_at as string).getTime())
+          .slice(0, 8);
+        const when = (iso: string) => {
+          const t = new Date(iso).getTime();
+          if (!now || t <= now) return 'due now';
+          return `next ${new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+        };
         return (
           <div className="mb-5 rounded-xl border border-line bg-panel p-4">
             <div className="mb-3 flex items-center gap-2 font-mono text-xs text-muted">
@@ -394,7 +405,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               live activity · {active.length} browsing now
             </div>
             {active.length === 0 ? (
-              <p className="font-mono text-[13px] text-muted">No sessions this moment — they cycle a few at a time across your boxes. Watch here as workers open accounts and browse in real time.</p>
+              <p className="font-mono text-[13px] text-muted">Nothing browsing this exact moment — sessions run a few at a time and each lasts a few minutes. The schedule below shows what&apos;s next.</p>
             ) : (
               <ul className="space-y-1.5 font-mono text-[13px]">
                 {active.map((a) => (
@@ -406,6 +417,21 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                 ))}
               </ul>
             )}
+            {nextUp.length > 0 ? (
+              <div className="mt-3 border-t border-line pt-3">
+                <div className="mb-2 font-mono text-xs text-muted">next up</div>
+                <ul className="grid grid-cols-1 gap-x-6 gap-y-1 font-mono text-[13px] sm:grid-cols-2">
+                  {nextUp.map((a) => (
+                    <li key={a.id} className="flex items-baseline gap-2">
+                      <span className="shrink-0 text-fg">{a.label}</span>
+                      <span className="ml-auto shrink-0 text-xs" style={now && new Date(a.warmup_next_at as string).getTime() <= now ? { color: 'rgb(var(--good))' } : { color: 'rgb(var(--muted))' }}>
+                        {when(a.warmup_next_at as string)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         );
       })() : null}
