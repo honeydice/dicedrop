@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.35.1"
+VERSION = "0.35.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3726,6 +3726,84 @@ WARM_SECTIONS = [
 ]
 
 
+SEARCH_ENGINES = [
+    ("Google", "https://www.google.com/search?q=", "https://www.google.com/"),
+    ("Bing", "https://www.bing.com/search?q=", "https://www.bing.com/"),
+    ("DuckDuckGo", "https://duckduckgo.com/?q=", "https://duckduckgo.com/"),
+    ("YouTube", "https://www.youtube.com/results?search_query=", "https://www.youtube.com/"),
+]
+
+
+def search_blocked(page):
+    """True when a search engine is showing its own captcha / "unusual traffic" wall rather than results."""
+    try:
+        u = (page.url or "").lower()
+        if "/sorry/" in u or "/errors/" in u or "ipv4check" in u:
+            return True
+        body = (page.inner_text("body", timeout=3000) or "").lower()
+        for sign in ("unusual traffic", "are you a robot", "verify you're human", "verify you are human",
+                     "detected unusual", "our systems have detected", "confirm you're not a robot",
+                     "before you continue to", "not a robot"):
+            if sign in body:
+                return True
+        if page.locator("iframe[src*='recaptcha'], iframe[src*='hcaptcha'], form#captcha-form").count() > 0:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def enter_amazon_via_search(page, term):
+    """Start the session at a search engine (Google or Bing first) and arrive at Amazon with that engine as the
+    referrer — the way a real shopper lands, which avoids Amazon's cold "are you a person" home page. If an engine
+    is itself throwing a captcha, move on to the next (Bing, then DuckDuckGo, then YouTube). Returns the engine
+    name used, or '' if every engine was blocked (then it lands on Amazon directly)."""
+    order = SEARCH_ENGINES[:]
+    if random.random() < 0.5:  # start with Google or Bing at random; the rest stay as ordered fallbacks
+        order = [order[1], order[0]] + order[2:]
+    used, referer = "", ""
+    for name, search_url, home in order:
+        try:
+            page.goto(search_url + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=60000)
+            settle(page)
+        except Exception:
+            continue
+        if search_blocked(page):
+            continue  # this engine wants a captcha — try the next one
+        used, referer = name, home
+        try:
+            for _ in range(random.randint(1, 3)):  # read the results for a moment like a person
+                page.mouse.wheel(0, random.randint(300, 800))
+                pause(0.8, 2.2)
+        except Exception:
+            pass
+        # Prefer a real click on an Amazon result (keeps the referrer); else go to Amazon with the referrer set.
+        try:
+            links = page.locator("a[href*='amazon.com/']:visible")
+            if links.count() > 0:
+                links.first.evaluate("e => e.removeAttribute('target')")
+                links.first.click(timeout=8000)
+                page.wait_for_load_state("domcontentloaded", timeout=60000)
+                settle(page)
+                if "amazon." in (page.url or ""):
+                    return used
+        except Exception:
+            pass
+        break
+    target = ("https://www.amazon.com/s?k=" + term.replace(" ", "+")) if used else "https://www.amazon.com/"
+    try:
+        if referer:
+            page.goto(target, wait_until="domcontentloaded", timeout=90000, referer=referer)
+        else:
+            page.goto(target, wait_until="domcontentloaded", timeout=90000)
+    except Exception:
+        try:
+            page.goto("https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
+        except Exception:
+            pass
+    return used
+
+
 def warm_up_browse(page, minutes, signed_in=True):
     """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
     It never adds to the cart and never goes to checkout. With signed_in=False it browses as a guest (no account yet),
@@ -3818,9 +3896,11 @@ def warm_up_browse(page, minutes, signed_in=True):
         except Exception:
             pass
 
-    page.goto("https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
+    # Arrive at Amazon through a search engine (Google/Bing, falling back to DuckDuckGo/YouTube on a captcha) so the
+    # first hit carries a real referrer instead of a bare browser opening amazon.com cold.
+    entry = enter_amazon_via_search(page, random.choice(WARM_SEARCHES))
     settle(page)
-    still_welcome("on the home page")
+    still_welcome("after arriving from " + (entry or "the web"))
     scroll(random.randint(1, 3))
     for term in random.sample(WARM_SEARCHES, 4):
         if time.time() > ends:
