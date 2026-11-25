@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.38.0"
+VERSION = "0.38.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1283,7 +1283,10 @@ def ip_gate_open(label, secrets, reason):
         base_user = _apply_target(base_user, ctx.get("target_location"))
     attempt_user = base_user
     d = {}
-    for attempt in range(10):
+    # Warm-up is just browsing, so the gate is best-effort there: a couple of quick tries and then open anyway.
+    # Orders keep the strict ten-try block — they must not place on a dirty IP.
+    is_warm = (reason or "").startswith("warm")
+    for attempt in range(2 if is_warm else 10):
         test_proxy = dict(proxy)
         test_proxy["username"] = attempt_user
         # First read the exit IP for FREE (ipify — no ipapi.is credit). If this exact IP was already
@@ -1292,6 +1295,8 @@ def ip_gate_open(label, secrets, reason):
         try:
             cur_ip = proxy_exit_ip(test_proxy)
         except Exception as failure:
+            if is_warm:
+                break
             return False, "Couldn't read the proxy's IP. Not opened; will retry. (" + str(failure)[:100] + ")"
         cached = None
         if cur_ip:
@@ -1310,10 +1315,14 @@ def ip_gate_open(label, secrets, reason):
             except Exception:
                 con = {"ok": True}
             if not con.get("ok"):
+                if is_warm:
+                    break
                 return False, "IP checks reached today's budget (" + str(con.get("budget")) + "). This account is waiting for IP checks until the daily reset."
             try:
                 d = ip_verdict(ipapi_check(test_proxy, ipapi_key_box))
             except Exception as failure:
+                if is_warm:
+                    break
                 return False, "IP not checked (ipapi.is error: " + str(failure)[:120] + "). Not opened; will retry."
             passed = d.get("pass")
             if d.get("ip"):
@@ -1333,6 +1342,8 @@ def ip_gate_open(label, secrets, reason):
                     mlx_set_proxy(pid, gate_prof.get("name"), gate_params, attempt_user)
                 except Exception as failure:
                     log("ip gate could not save the winning proxy for " + label + ": " + str(failure)[:160])
+                    if is_warm:
+                        return True, ""
                     return False, "Found a clean IP but could not save it to the profile. Not opened."
             try:
                 call("/api/worker/v1/ip-gate", {"op": "result", "account": label, "result": d, "outcome": "pass"})
@@ -1340,6 +1351,9 @@ def ip_gate_open(label, secrets, reason):
                 pass
             return True, ""
         attempt_user = rotate_sid(base_user)
+    if is_warm:
+        # No clean IP, but warm-up only browses — open with the current proxy and keep aging the profile.
+        return True, ""
     try:
         call("/api/worker/v1/ip-gate", {"op": "result", "account": label, "result": {"tried": 10, "pass": False, "last": d}, "outcome": "help"})
     except Exception:
