@@ -143,6 +143,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [createCount, setCreateCount] = useState(10);
   const [createCarrier, setCreateCarrier] = useState('random');
   const [createSupplier, setCreateSupplier] = useState('amazon');
+  const [createCountry, setCreateCountry] = useState('us');
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState('');
   const createBatch = async () => {
@@ -150,7 +151,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     setError('');
     setCreateMsg('');
     try {
-      const r = await createBrowsers(createCount, { supplier: createSupplier, ...(createCarrier === 'random' ? {} : { carrier: createCarrier }) });
+      const r = await createBrowsers(createCount, { supplier: createSupplier, country: createCountry, ...(createCountry === 'us' && createCarrier !== 'random' ? { carrier: createCarrier } : {}) });
       if (!r.ok) setError(r.error);
       else setCreateMsg(r.note || 'Created.');
       await refresh();
@@ -338,6 +339,13 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                 </select>
               </label>
               <label className="flex flex-col gap-1">
+                <span className="font-mono text-xs text-muted">country</span>
+                <select value={createCountry} onChange={(e) => setCreateCountry(e.target.value)} className={`${field} w-36`}>
+                  <option value="us">United States</option>
+                  <option value="il">Israel</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
                 <span className="font-mono text-xs text-muted">how many</span>
                 <input
                   type="number"
@@ -348,14 +356,16 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                   className={`${field} w-24`}
                 />
               </label>
-              <label className="flex flex-col gap-1">
-                <span className="font-mono text-xs text-muted">carrier</span>
-                <select value={createCarrier} onChange={(e) => setCreateCarrier(e.target.value)} className={`${field} w-44`}>
-                  <option value="random">Random (recommended)</option>
-                  <option value="verizon_g_home">Verizon</option>
-                  <option value="t_mobile_usa">T-Mobile</option>
-                </select>
-              </label>
+              {createCountry === 'us' ? (
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-xs text-muted">carrier</span>
+                  <select value={createCarrier} onChange={(e) => setCreateCarrier(e.target.value)} className={`${field} w-44`}>
+                    <option value="random">Random (recommended)</option>
+                    <option value="verizon_g_home">Verizon</option>
+                    <option value="t_mobile_usa">T-Mobile</option>
+                  </select>
+                </label>
+              ) : null}
               <button type="button" className={btnAccent} disabled={creating} onClick={() => void createBatch()}>
                 {creating ? 'creating…' : `Create ${createCount} browser${createCount === 1 ? '' : 's'}`}
               </button>
@@ -364,7 +374,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </button>
             </div>
             <p className="mt-3 text-[12px] text-muted">
-              Each one is a macOS browser on a mobile IP in Los Angeles, California, named {createSupplier === 'walmart' ? 'WW' : 'AA'}### after the highest so far, and warms on {createSupplier === 'walmart' ? 'Walmart' : 'Amazon'}. They’re spread across your online boxes, built one by one, then start warming on their own.
+              Each one is a macOS browser on a mobile IP {createCountry === 'il' ? 'in Israel' : 'in Los Angeles, California'}, named {createCountry === 'il' ? 'IL' : createSupplier === 'walmart' ? 'WW' : 'AA'}### after the highest so far, and warms on {createSupplier === 'walmart' ? 'Walmart' : 'Amazon'}{createCountry === 'il' ? ' (amazon.com, which Israel uses)' : ''}. They’re spread across your online boxes, built one by one, then start warming on their own.
             </p>
             {createMsg ? <p className="mt-2 text-[13px]" style={{ color: 'rgb(var(--accent))' }}>{createMsg}</p> : null}
           </div>

@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.36.2"
+VERSION = "0.37.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1087,7 +1087,11 @@ def mlx_build_mobile_username(template_username, spec):
     country/region/city/isp (carrier) from the spec, mobile type, and a fresh session id."""
     prefix = (template_username or "").split("-country-")[0]
     tok = lambda s: re.sub(r"[^a-z0-9]+", "_", (s or "").strip().lower()).strip("_")
-    parts = [prefix, "country-" + (tok(spec.get("country")) or "us"), "region-" + (tok(spec.get("region")) or "california")]
+    parts = [prefix, "country-" + (tok(spec.get("country")) or "us")]
+    # region/city/isp are optional and only added when the spec gives them — a country-only target (e.g. Israel)
+    # must not inherit a US region/city.
+    if spec.get("region"):
+        parts.append("region-" + tok(spec.get("region")))
     if spec.get("city"):
         parts.append("city-" + tok(spec.get("city")))
     if spec.get("isp"):
