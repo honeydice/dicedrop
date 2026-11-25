@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.35.3"
+VERSION = "0.35.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3804,6 +3804,25 @@ def enter_amazon_via_search(page, term):
     return used
 
 
+def enter_amazon_direct(page, term):
+    """Arrive at Amazon directly, the way a returning shopper does — a typed address, a bookmark, or the app. Varies
+    the landing (home, deals, best sellers, or straight into a search) so it isn't the bare home page every time."""
+    name, url = random.choice([
+        ("direct (home)", "https://www.amazon.com/"),
+        ("direct (deals)", "https://www.amazon.com/deals"),
+        ("direct (best sellers)", "https://www.amazon.com/gp/bestsellers"),
+        ("direct (search)", "https://www.amazon.com/s?k=" + term.replace(" ", "+")),
+    ])
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=90000)
+    except Exception:
+        try:
+            page.goto("https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
+        except Exception:
+            pass
+    return name
+
+
 def warm_up_browse(page, minutes, signed_in=True):
     """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
     It never adds to the cart and never goes to checkout. With signed_in=False it browses as a guest (no account yet),
@@ -3896,11 +3915,16 @@ def warm_up_browse(page, minutes, signed_in=True):
         except Exception:
             pass
 
-    # Arrive at Amazon through a search engine (Google/Bing, falling back to DuckDuckGo/YouTube on a captcha) so the
-    # first hit carries a real referrer instead of a bare browser opening amazon.com cold.
-    entry = enter_amazon_via_search(page, random.choice(WARM_SEARCHES))
+    # Vary how the session arrives so it isn't the same path every time: about half through a search engine
+    # (Google/Bing, falling back to DuckDuckGo/YouTube on a captcha, carrying a real referrer), the rest direct
+    # like a returning shopper (typed address / bookmark / app) landing on a varied page.
+    term = random.choice(WARM_SEARCHES)
+    if random.random() < 0.55:
+        entry = enter_amazon_via_search(page, term) or "the web"
+    else:
+        entry = enter_amazon_direct(page, term)
     settle(page)
-    still_welcome("after arriving from " + (entry or "the web"))
+    still_welcome("after arriving from " + entry)
     scroll(random.randint(1, 3))
     for term in random.sample(WARM_SEARCHES, 4):
         if time.time() > ends:
