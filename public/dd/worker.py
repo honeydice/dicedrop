@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.37.2"
+VERSION = "0.37.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -4307,9 +4307,9 @@ def warm_up_job(label):
         _, problem, _, _ = run_in_account_browser(
             label, lambda text: None, work, reason="warm-up",
             summary=lambda r, e: (False, e) if e else (True, str(r or "browsed")))
+        # An identity check during warm-up does NOT park the account. Record it as the error (so you can see it)
+        # and let it try again on its normal retry — a later visit from a fresh IP usually clears on its own.
         is_robot = bool(problem) and "whether a person is there" in problem
-        if is_robot:
-            report(label, robot_check=True)
         log("warm-up for " + label + " finished" + (": " + problem if problem else ""))
     except Exception as failure:
         problem = "The warm-up could not run: " + str(failure)[:200]
