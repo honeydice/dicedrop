@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.37.0"
+VERSION = "0.37.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -4279,6 +4279,7 @@ def walmart_warm_up_browse(page, minutes):
 
 def warm_up_job(label):
     problem = ""
+    is_robot = False
     warm_signal.clear()
     try:
         current_job["text"] = "warming up " + label
@@ -4306,14 +4307,15 @@ def warm_up_job(label):
         _, problem, _, _ = run_in_account_browser(
             label, lambda text: None, work, reason="warm-up",
             summary=lambda r, e: (False, e) if e else (True, str(r or "browsed")))
-        if problem and "whether a person is there" in problem:
-            report(label, robot_check=True, error="The store is asking this account to confirm a person is there. Open its browser and answer it. Warm-up and orders are paused for it until then.")
+        is_robot = bool(problem) and "whether a person is there" in problem
+        if is_robot:
+            report(label, robot_check=True)
         log("warm-up for " + label + " finished" + (": " + problem if problem else ""))
     except Exception as failure:
         problem = "The warm-up could not run: " + str(failure)[:200]
     finally:
         try:
-            call("/api/worker/v1/accounts/warmed", {"account": label, "error": problem, "google": warm_signal.get("google")})
+            call("/api/worker/v1/accounts/warmed", {"account": label, "error": ("Identity check." if is_robot else problem), "google": warm_signal.get("google")})
         except Exception as failure:
             log("could not record the warm-up: " + str(failure)[:200])
         current_job["text"] = ""

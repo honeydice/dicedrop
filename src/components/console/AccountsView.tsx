@@ -21,7 +21,7 @@ function isReady(a: OpsAccount): boolean {
 
 /** The one-word state shown on each account row. Green only once the account is truly signed in to Amazon. */
 function signIn(a: OpsAccount): { text: string; color: string } {
-  if (a.robot_check_at) return { text: 'Amazon asks: are you a person · open its browser', color: TONE.bad };
+  if (a.robot_check_at) return { text: 'Identity Check', color: TONE.warn };
   if (a.in_use_elsewhere) return { text: 'open on another computer · worker waiting', color: TONE.warn };
   if (a.browser_state === 'open' && (a.browser_note ?? '').startsWith('NEEDS YOU')) return { text: 'NEEDS YOU · open the live browser', color: TONE.bad };
   if (a.browser_state) return { text: a.browser_state === 'open' ? 'browser open · in use by hand' : 'opening browser', color: 'rgb(var(--accent))' };
@@ -501,8 +501,10 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     <Dot color={st.color} />
                     <span className="font-mono text-[13px] font-medium text-fg">{a.label}</span>
                     <span
-                      className={`rounded px-1.5 py-px font-mono text-[10px] font-semibold ${a.country === 'il' ? '' : 'border border-line text-muted'}`}
-                      style={a.country === 'il' ? { background: 'rgb(var(--accent) / 0.15)', color: 'rgb(var(--accent))' } : undefined}
+                      className="rounded px-1.5 py-px font-mono text-[10px] font-semibold"
+                      style={a.country === 'il'
+                        ? { background: 'rgba(37,99,235,0.20)', color: 'rgb(96,165,250)' }
+                        : { background: 'rgba(96,165,250,0.12)', color: 'rgb(147,197,253)' }}
                     >
                       {a.country === 'il' ? 'ISRAEL' : 'US'}
                     </span>
@@ -513,7 +515,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                   <span className="hidden min-w-0 flex-1 truncate font-mono text-xs text-muted sm:block">
                     {[a.login_email, a.box_name ?? 'no vps', a.engine === 'multilogin' ? 'Multilogin' : 'Kameleo'].filter(Boolean).join('  ·  ')}
                     {a.ordering_enabled === false ? <span className="ml-3" style={{ color: TONE.warn }}>ordering off</span> : null}
-                    {a.last_error ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
+                    {a.last_error && !a.robot_check_at ? <span className="ml-3 text-bad">{a.last_error}</span> : null}
                     {a.current_order ? <span className="ml-3">placing {a.current_order}</span> : null}
                   </span>
                   <span className="shrink-0 whitespace-nowrap text-right font-mono text-xs sm:w-[110px]" style={{ color: full ? TONE.warn : 'rgb(var(--muted))' }}>
