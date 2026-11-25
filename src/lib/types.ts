@@ -163,6 +163,8 @@ export interface OpsAccount {
   allowed_clients: string[];
   allowed_names: string[];
   supplier: string;
+  /** Account country — 'us' or 'il'. A tag, not part of the label (all Amazon accounts are AA###). */
+  country?: string;
   region: string;
   billing_name: string | null;
   billing_zip: string | null;

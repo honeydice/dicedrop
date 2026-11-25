@@ -374,7 +374,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </button>
             </div>
             <p className="mt-3 text-[12px] text-muted">
-              Each one is a macOS browser on a mobile IP {createCountry === 'il' ? 'in Israel' : 'in Los Angeles, California'}, named {createCountry === 'il' ? 'IL' : createSupplier === 'walmart' ? 'WW' : 'AA'}### after the highest so far, and warms on {createSupplier === 'walmart' ? 'Walmart' : 'Amazon'}{createCountry === 'il' ? ' (amazon.com, which Israel uses)' : ''}. They’re spread across your online boxes, built one by one, then start warming on their own.
+              Each one is a macOS browser on a mobile IP {createCountry === 'il' ? 'in Israel' : 'in Los Angeles, California'}, named {createSupplier === 'walmart' ? 'WW' : 'AA'}### after the highest so far and tagged {createCountry === 'il' ? 'ISRAEL' : 'US'}, warming on {createSupplier === 'walmart' ? 'Walmart' : 'Amazon'}{createCountry === 'il' ? ' (amazon.com, which Israel uses)' : ''}. They’re spread across your online boxes, built one by one, then start warming on their own.
             </p>
             {createMsg ? <p className="mt-2 text-[13px]" style={{ color: 'rgb(var(--accent))' }}>{createMsg}</p> : null}
           </div>
@@ -500,6 +500,12 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                   <span className="flex min-w-0 flex-1 items-center gap-3 sm:w-[240px] sm:flex-none sm:shrink-0">
                     <Dot color={st.color} />
                     <span className="font-mono text-[13px] font-medium text-fg">{a.label}</span>
+                    <span
+                      className={`rounded px-1.5 py-px font-mono text-[10px] font-semibold ${a.country === 'il' ? '' : 'border border-line text-muted'}`}
+                      style={a.country === 'il' ? { background: 'rgb(var(--accent) / 0.15)', color: 'rgb(var(--accent))' } : undefined}
+                    >
+                      {a.country === 'il' ? 'ISRAEL' : 'US'}
+                    </span>
                     <span className="font-mono text-xs" style={{ color: st.color }}>
                       {st.text}
                     </span>
