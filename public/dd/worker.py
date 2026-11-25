@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.36.1"
+VERSION = "0.36.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -49,9 +49,12 @@ class Slots:
         with self.guard:
             self.size = max(1, min(int(size), 8))
 
-    def acquire(self, blocking=False):
+    def acquire(self, blocking=False, reserve=0):
+        # reserve leaves that many slots free for higher-priority work (orders). Warm-up passes a reserve so it
+        # never fills the last slot; orders pass reserve=0 and may use the whole box.
         with self.guard:
-            if self.active < self.size:
+            ceiling = max(1, self.size - max(0, reserve))
+            if self.active < ceiling:
                 self.active += 1
                 return True
             return False
@@ -91,6 +94,7 @@ running_text = {}      # what each running job is doing, for the VPS page
 busy_accounts = set()  # an account is only ever open in one browser at a time
 started_orders = set() # an order run is only ever started once by this worker
 job_lock = Slots(1)
+ORDER_RESERVE = 1  # warm-up always leaves this many job slots free so a dispatched order never waits behind it
 current_job = PerJob()
 install_guard = threading.Lock()
 stderr_guard = threading.Lock()
@@ -5158,7 +5162,8 @@ def main():
                     label = job.get("account_label") or ""
                     if not label or label in busy_accounts:
                         continue
-                    if job_lock.acquire(blocking=False):
+                    # Keep ORDER_RESERVE slots free for orders so warm-up never blocks a real order.
+                    if job_lock.acquire(blocking=False, reserve=ORDER_RESERVE):
                         log("warm-up session due for " + label)
                         start_job(warm_up_job, label, label)
         except urllib.error.HTTPError as error:
