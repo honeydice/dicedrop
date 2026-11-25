@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, createBrowsers, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setAccountIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, createBrowsers, setAllWarmup, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setAccountIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -142,6 +142,21 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       const r = await createBrowsers(createCount, createCarrier === 'random' ? {} : { carrier: createCarrier });
       if (!r.ok) setError(r.error);
       else setCreateMsg(r.note || 'Created.');
+      await refresh();
+    } catch {
+      setError('That did not go through. Try again.');
+    } finally {
+      setCreating(false);
+    }
+  };
+  const warmAll = async () => {
+    setCreating(true);
+    setError('');
+    setCreateMsg('');
+    try {
+      const r = await setAllWarmup();
+      if (!r.ok) setError(r.error);
+      else setCreateMsg(r.note || 'Warming all.');
       await refresh();
     } catch {
       setError('That did not go through. Try again.');
@@ -325,6 +340,9 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </label>
               <button type="button" className={btnAccent} disabled={creating} onClick={() => void createBatch()}>
                 {creating ? 'creating…' : `Create ${createCount} browser${createCount === 1 ? '' : 's'}`}
+              </button>
+              <button type="button" className={btn} disabled={creating} onClick={() => void warmAll()}>
+                Warm up all
               </button>
             </div>
             <p className="mt-3 text-[12px] text-muted">

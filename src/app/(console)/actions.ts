@@ -520,6 +520,20 @@ export async function createBrowsers(count: number, spec: { carrier?: string } =
   }
 }
 
+/** Arms every warm-up-stage account to browse now (unpauses, spreads start times over ~20 min). */
+export async function setAllWarmup(): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { data, error } = await ctx.db.rpc('dd_ops_warmup_all');
+    if (error) return done(error);
+    const armed = ((data as { armed?: number } | null)?.armed) ?? 0;
+    return { ok: true, error: '', note: `Warming all ${armed} warm-up account${armed === 1 ? '' : 's'} — they’ll browse on a rotating, staggered schedule.` };
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Turns warm-up on for an account for a number of days (0 turns it off). While warming up it only browses. */
 export async function setWarmup(id: string, days: number): Promise<Result> {
   try {
