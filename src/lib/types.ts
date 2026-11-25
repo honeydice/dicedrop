@@ -60,6 +60,8 @@ export interface OpsOrder {
   client_id: string;
   client_name: string;
   account_label: string | null;
+  /** Where the order is bought/fulfilled from — 'amazon', 'walmart', 'tiktok'. Shown as a marketplace tag. */
+  marketplace?: string | null;
   box_name: string | null;
   stuck: boolean;
 }

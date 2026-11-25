@@ -411,6 +411,20 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
                   {now ? new Date(o.updated_at).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }) : ' '}
                 </span>
                 <span className="hidden w-[150px] shrink-0 truncate text-fg sm:block">{o.order_number}</span>
+                {(() => {
+                  const mk = (o.marketplace ?? 'amazon').toLowerCase();
+                  const map: Record<string, [string, string, string]> = {
+                    amazon: ['AMZ', 'rgba(245,158,11,0.18)', '#f59e0b'],
+                    walmart: ['WMT', 'rgba(37,99,235,0.20)', '#3b82f6'],
+                    tiktok: ['TTK', 'rgba(168,85,247,0.20)', '#a855f7'],
+                  };
+                  const [txt, bg, fg] = map[mk] ?? [mk.slice(0, 3).toUpperCase(), 'var(--chip)', 'rgb(var(--muted))'];
+                  return (
+                    <span className="hidden w-[38px] shrink-0 rounded px-1 py-[2px] text-center text-[10px] font-bold sm:inline-block" style={{ background: bg, color: fg }}>
+                      {txt}
+                    </span>
+                  );
+                })()}
                 <span className="hidden w-[76px] shrink-0 truncate text-muted md:block">{o.account_label ?? '—'}</span>
                 <span className="hidden w-[160px] shrink-0 truncate text-soft sm:block" title={o.ship_name ?? o.buyer_name ?? ''}>
                   {shortName(o.ship_name ?? o.buyer_name ?? '')}
