@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.34.7"
+VERSION = "0.35.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1072,6 +1072,77 @@ def mlx_set_proxy(pid, name, params, new_username):
         return "/profile/update"
     except Exception as failure:
         raise Stop("could not write the proxy to the profile via /profile/update: " + str(failure)[:220])
+
+
+def _fresh_sid():
+    return "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(8))
+
+
+def mlx_build_mobile_username(template_username, spec):
+    """Build a Multilogin mobile-proxy username from a known-good one: keep the account prefix, set
+    country/region/city/isp (carrier) from the spec, mobile type, and a fresh session id."""
+    prefix = (template_username or "").split("-country-")[0]
+    tok = lambda s: re.sub(r"[^a-z0-9]+", "_", (s or "").strip().lower()).strip("_")
+    parts = [prefix, "country-" + (tok(spec.get("country")) or "us"), "region-" + (tok(spec.get("region")) or "california")]
+    if spec.get("city"):
+        parts.append("city-" + tok(spec.get("city")))
+    if spec.get("isp"):
+        parts.append("isp-" + str(spec.get("isp")).strip())
+    parts.append("type-mobile")
+    parts.append("sid-" + _fresh_sid())
+    parts.append("filter-medium")
+    return "-".join(parts)
+
+
+def mlx_create_profile(name, spec):
+    """Create a new Multilogin profile (macOS Mimic + mobile proxy) modeled on a template profile's folder,
+    core version and proxy account. The fingerprint is left for Multilogin to generate fresh per profile, so
+    the fifty browsers don't share one fingerprint. Returns (profile_id, profile_name)."""
+    spec = spec or {}
+    template = (spec.get("template") or "").strip()
+    if not template:
+        raise Stop("No template profile is set to model new browsers on (Settings > multilogin template).")
+    folder, tpid = mlx_find(template, {"mlx_profile": template})
+    meta = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [tpid]}, token=mlx_token())
+    tprof = (((meta.get("data") or {}).get("profiles") or [{}])[0])
+    tparams = tprof.get("parameters") or {}
+    tproxy = tparams.get("proxy") or {}
+    if not tproxy.get("username") or not tproxy.get("host"):
+        raise Stop("The template profile \"" + template + "\" has no Multilogin mobile proxy to model from.")
+    new_user = mlx_build_mobile_username(tproxy.get("username"), spec)
+    body = {
+        "name": name,
+        "folder_id": folder,
+        "browser_type": tprof.get("browser_type") or "mimic",
+        "os_type": spec.get("os") or "macos",
+        "parameters": {
+            "flags": {"proxy_masking": "custom"},
+            "storage": {"is_local": False, "save_service_worker": True},
+            "proxy": {
+                "type": tproxy.get("type") or "socks5",
+                "host": tproxy.get("host"),
+                "port": tproxy.get("port"),
+                "username": new_user,
+                "password": tproxy.get("password") or "0",
+            },
+        },
+    }
+    if tprof.get("core_version"):
+        body["core_version"] = tprof.get("core_version")
+    reply = mlx_request("POST", MLX_API + "/profile/create", body, token=mlx_token())
+    data = reply.get("data") or {}
+    new_id = ""
+    if isinstance(data.get("ids"), list) and data.get("ids"):
+        new_id = str(data["ids"][0])
+    elif data.get("id"):
+        new_id = str(data.get("id"))
+    if not new_id:
+        # The create succeeded but gave no id in the body — find it by its unique name instead.
+        try:
+            _folder, new_id = mlx_find(name, {"mlx_profile": name})
+        except Exception:
+            raise Stop("Multilogin did not return a new profile id: " + json.dumps(reply)[:220])
+    return new_id, name
 
 
 def run_ip_probe(profile_name, key):
@@ -4643,6 +4714,22 @@ def main():
                     log("ip check for " + clabel + ": " + json.dumps({k: v for k, v in res.items() if k != "password"})[:200])
                 except Exception as failure:
                     log("could not report the ip check for " + clabel + ": " + str(failure)[:140])
+            # New warm-up browsers queued from the console: create the Multilogin profile (macOS Mimic +
+            # mobile proxy, randomized carrier), one per beat so they appear one by one. No browser opens.
+            for job in (reply.get("profile_create_jobs") or [])[:1]:
+                clabel = job.get("account_label") or ""
+                if not clabel:
+                    continue
+                try:
+                    new_id, new_name = mlx_create_profile(clabel, job.get("spec") or {})
+                    res = {"account": clabel, "profile_name": new_name, "profile_id": new_id}
+                except Exception as failure:
+                    res = {"account": clabel, "error": str(failure)[:300]}
+                try:
+                    call("/api/worker/v1/accounts/created", res)
+                    log("created browser " + clabel + (": " + res["error"] if res.get("error") else " ok"))
+                except Exception as failure:
+                    log("could not record the browser creation for " + clabel + ": " + str(failure)[:160])
             if reply.get("desired_state") != "pause":
                 for account in reply.get("accounts", []):
                     label = account.get("label")

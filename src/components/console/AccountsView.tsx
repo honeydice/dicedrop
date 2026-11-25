@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setAccountIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, createBrowsers, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setAccountIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -128,6 +128,26 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     setAllLogs({ reason, lines: null });
     const lines = await getAllAccountLogs(reason);
     setAllLogs({ reason, lines: lines ?? [] });
+  };
+  // Create browsers (Warm up tab): bulk-mint AA### Multilogin profiles and queue them for warm-up.
+  const [createCount, setCreateCount] = useState(10);
+  const [createCarrier, setCreateCarrier] = useState('random');
+  const [creating, setCreating] = useState(false);
+  const [createMsg, setCreateMsg] = useState('');
+  const createBatch = async () => {
+    setCreating(true);
+    setError('');
+    setCreateMsg('');
+    try {
+      const r = await createBrowsers(createCount, createCarrier === 'random' ? {} : { carrier: createCarrier });
+      if (!r.ok) setError(r.error);
+      else setCreateMsg(r.note || 'Created.');
+      await refresh();
+    } catch {
+      setError('That did not go through. Try again.');
+    } finally {
+      setCreating(false);
+    }
   };
   const [syncing, setSyncing] = useState(false);
   const syncNow = async () => {
@@ -278,9 +298,41 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       </div>
 
       {view === 'warmup' ? (
-        <p className="mb-4 text-[13px] text-muted">
-          Warm-up accounts only ever browse Amazon — searching, reading, wandering sections, adding to cart and emptying it — on a rotating schedule. They are never handed an order until you move one to live.
-        </p>
+        <>
+          <p className="mb-4 text-[13px] text-muted">
+            Warm-up accounts only ever browse Amazon — searching, reading, wandering sections, adding to cart and emptying it — on a rotating schedule. They are never handed an order until you move one to live.
+          </p>
+          <div className="mb-5 rounded-xl border border-line bg-panel p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="font-mono text-xs text-muted">how many</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={createCount}
+                  onChange={(e) => setCreateCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                  className={`${field} w-24`}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="font-mono text-xs text-muted">carrier</span>
+                <select value={createCarrier} onChange={(e) => setCreateCarrier(e.target.value)} className={`${field} w-44`}>
+                  <option value="random">Random (recommended)</option>
+                  <option value="verizon_g_home">Verizon</option>
+                  <option value="t_mobile_usa">T-Mobile</option>
+                </select>
+              </label>
+              <button type="button" className={btnAccent} disabled={creating} onClick={() => void createBatch()}>
+                {creating ? 'creating…' : `Create ${createCount} browser${createCount === 1 ? '' : 's'}`}
+              </button>
+            </div>
+            <p className="mt-3 text-[12px] text-muted">
+              Each one is a macOS browser on a mobile IP in Los Angeles, California, named AA### after the highest so far. They’re spread across your online boxes, built one by one, then start warming on their own.
+            </p>
+            {createMsg ? <p className="mt-2 text-[13px]" style={{ color: 'rgb(var(--accent))' }}>{createMsg}</p> : null}
+          </div>
+        </>
       ) : null}
       {view === 'archived' ? (
         <p className="mb-4 text-[13px] text-muted">

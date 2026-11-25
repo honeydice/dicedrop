@@ -12,6 +12,8 @@ export interface Result {
   secret?: string;
   /** A second secret shown once (a webhook signing secret). */
   secret2?: string;
+  /** A short human note about what happened (e.g. which browsers were created). */
+  note?: string;
 }
 
 const DENIED: Result = { ok: false, error: 'Operators only.' };
@@ -491,6 +493,28 @@ export async function setAccountStage(id: string, stage: 'live' | 'warmup' | 'ar
     if (!ctx) return DENIED;
     const { error } = await ctx.db.rpc('dd_ops_set_stage', { p_account: id, p_stage: stage });
     return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
+/**
+ * Bulk-creates warm-up browsers: mints AA### names from the highest seen, resolves a random carrier per
+ * browser (or a chosen one), spreads them across the available boxes, and queues each for Multilogin
+ * profile creation (macOS + mobile proxy, US/California/Los Angeles). They start guest-warming once built.
+ */
+export async function createBrowsers(count: number, spec: { carrier?: string } = {}): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const n = Math.max(1, Math.min(50, Math.round(count || 0)));
+    const { data, error } = await ctx.db.rpc('dd_ops_create_browsers', { p_count: n, p_spec: spec });
+    if (error) return done(error);
+    const created = (((data as { created?: { label: string }[] } | null)?.created) ?? []).map((c) => c.label);
+    const note = created.length
+      ? `Queued ${created.length} browser${created.length === 1 ? '' : 's'}: ${created[0]}${created.length > 1 ? `–${created[created.length - 1]}` : ''}. They’ll build one by one, then start warming.`
+      : 'No browsers were created.';
+    return { ok: true, error: '', note };
   } catch {
     return FAILED;
   }
