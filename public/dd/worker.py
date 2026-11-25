@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.37.4"
+VERSION = "0.38.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3835,12 +3835,17 @@ def enter_amazon_direct(page, term):
     return name
 
 
-def warm_up_browse(page, minutes, signed_in=True):
+def warm_up_browse(page, minutes, signed_in=True, label=""):
     """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
     It never adds to the cart and never goes to checkout. With signed_in=False it browses as a guest (no account yet),
     to age a fresh profile and its IP before the Amazon account is created. Returns a short summary."""
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
+
+    def act(text):
+        # Report what this account is doing right now, for the live activity feed on the warm-up page.
+        if label:
+            report(label, activity=text)
 
     def still_welcome(where):
         # Amazon's "are you a person / I am human" page. The worker never answers it: the session ends here and the account is flagged.
@@ -3939,10 +3944,12 @@ def warm_up_browse(page, minutes, signed_in=True):
         entry = enter_amazon_direct(page, term)
     settle(page)
     still_welcome("after arriving from " + entry)
+    act("Opening Amazon" + (" (signed in)" if signed_in else ""))
     scroll(random.randint(1, 3))
     for term in random.sample(WARM_SEARCHES, 4):
         if time.time() > ends:
             break
+        act('Searching "' + term + '"')
         box = first_visible(page, "#twotabsearchtextbox, input[name='field-keywords']")
         if box is None:
             page.goto("https://www.amazon.com/s?k=" + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
@@ -3986,10 +3993,12 @@ def warm_up_browse(page, minutes, signed_in=True):
                 settle(page)
                 still_welcome("on a product page")
                 opened += 1
+                act("Reading a product")
                 scroll(random.randint(3, 7))
                 pause(2.0, 6.0)
                 # Now and then drop it in the cart (taken back out at the end). Never on every product.
                 if random.random() < 0.22:
+                    act("Adding to cart")
                     add_to_cart()
                 page.go_back(wait_until="domcontentloaded", timeout=60000)
                 settle(page)
@@ -4115,11 +4124,15 @@ def arrive_via_search(page, term, dest_home, dest_search, dest_host, lead_google
     return used
 
 
-def walmart_warm_up_browse(page, minutes):
+def walmart_warm_up_browse(page, minutes, label=""):
     """Browses Walmart like a shopper (guest): arrives via a search engine or direct, searches, opens products,
     reads down the page, sometimes carts then empties it. Never buys. Stops at once on Walmart's robot wall."""
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
+
+    def act(text):
+        if label:
+            report(label, activity=text)
 
     def check(where):
         if walmart_blocked(page):
@@ -4195,9 +4208,11 @@ def walmart_warm_up_browse(page, minutes):
     check("after arriving from " + entry)
     scroll(random.randint(1, 3))
 
+    act("Opening Walmart")
     for term in random.sample(WALMART_SEARCHES, 4):
         if time.time() > ends:
             break
+        act('Searching "' + term + '" on Walmart')
         box = first_visible(page, "input[aria-label='Search'], input[name='q'], input[type='search'], #global-search-input")
         if box is None:
             page.goto(WALMART_SEARCH + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
@@ -4237,6 +4252,7 @@ def walmart_warm_up_browse(page, minutes):
                 settle(page)
                 check("on a product page")
                 opened += 1
+                act("Reading a product on Walmart")
                 scroll(random.randint(3, 7))
                 pause(2.0, 6.0)
                 if random.random() < 0.22:
@@ -4289,20 +4305,21 @@ def warm_up_job(label):
             # Walmart profiles warm as guests (no Walmart sign-in flow yet) — this ages the profile + IP the same way.
             if site == "walmart":
                 stage[0] = "warming up Walmart as a guest"
-                return walmart_warm_up_browse(page, random.uniform(3.0, 5.5))
+                return walmart_warm_up_browse(page, random.uniform(3.0, 5.5), label=label)
             # No Amazon account yet (no saved password): warm the fresh profile as a guest to build cookies and
             # history on the profile + IP before the account is created. No sign-in attempted.
             if not secrets.get("password"):
                 stage[0] = "warming up as a guest"
-                return warm_up_browse(page, random.uniform(3.0, 5.5), signed_in=False)
+                return warm_up_browse(page, random.uniform(3.0, 5.5), signed_in=False, label=label)
             stage[0] = "signing in on Amazon"
+            report(label, activity="Signing in")
             state, reason = amazon_sign_in(page, label, secrets)
             if state != "signed_in":
                 report(label, session_state=state, error=reason, note="sign-in did not finish")
                 raise Stop("Amazon sign-in did not finish. " + reason)
             report(label, session_state="signed_in", error="")
             stage[0] = "browsing Amazon"
-            return warm_up_browse(page, random.uniform(3.0, 5.5))
+            return warm_up_browse(page, random.uniform(3.0, 5.5), label=label)
 
         _, problem, _, _ = run_in_account_browser(
             label, lambda text: None, work, reason="warm-up",

@@ -144,6 +144,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [createCarrier, setCreateCarrier] = useState('random');
   const [createSupplier, setCreateSupplier] = useState('amazon');
   const [createCountry, setCreateCountry] = useState('us');
+  const [showBrowser, setShowBrowser] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState('');
   const createBatch = async () => {
@@ -263,6 +264,9 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   return (
     <>
       <PageHead title="Accounts">
+        <button type="button" className={btn} onClick={() => setShowBrowser(true)}>
+          Add Browser
+        </button>
         <button type="button" className={btnAccent} onClick={() => setAdding(true)}>
           Add account
         </button>
@@ -285,6 +289,58 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             void refresh();
           }}
         />
+      ) : null}
+
+      {showBrowser ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:p-10" onMouseDown={(e) => e.target === e.currentTarget && setShowBrowser(false)}>
+          <div role="dialog" aria-modal="true" aria-label="Add browsers" className="w-full max-w-2xl overflow-hidden rounded-2xl border border-line bg-panel">
+            <div className="flex items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3">
+              <div className="font-mono text-[13px] text-fg">Add browsers</div>
+              <button type="button" className="min-h-[44px] bg-transparent px-2 font-mono text-[13px] text-muted hover:text-fg" onClick={() => setShowBrowser(false)}>close</button>
+            </div>
+            <div className="p-5">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-xs text-muted">store</span>
+                  <select value={createSupplier} onChange={(e) => setCreateSupplier(e.target.value)} className={`${field} w-36`}>
+                    <option value="amazon">Amazon</option>
+                    <option value="walmart">Walmart</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-xs text-muted">country</span>
+                  <select value={createCountry} onChange={(e) => setCreateCountry(e.target.value)} className={`${field} w-36`}>
+                    <option value="us">United States</option>
+                    <option value="il">Israel</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-xs text-muted">how many</span>
+                  <input type="number" min={1} max={50} value={createCount} onChange={(e) => setCreateCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} className={`${field} w-24`} />
+                </label>
+                {createCountry === 'us' ? (
+                  <label className="flex flex-col gap-1">
+                    <span className="font-mono text-xs text-muted">carrier</span>
+                    <select value={createCarrier} onChange={(e) => setCreateCarrier(e.target.value)} className={`${field} w-44`}>
+                      <option value="random">Random (recommended)</option>
+                      <option value="verizon_g_home">Verizon</option>
+                      <option value="t_mobile_usa">T-Mobile</option>
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button type="button" className={btnAccent} disabled={creating} onClick={() => void createBatch()}>
+                  {creating ? 'creating…' : `Create ${createCount} browser${createCount === 1 ? '' : 's'}`}
+                </button>
+                <button type="button" className={btn} disabled={creating} onClick={() => void warmAll()}>
+                  Warm up all
+                </button>
+              </div>
+              {createMsg ? <p className="mt-3 text-[13px]" style={{ color: 'rgb(var(--accent))' }}>{createMsg}</p> : null}
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {shot ? (
@@ -324,62 +380,35 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
         ))}
       </div>
 
-      {view === 'warmup' ? (
-        <>
-          <p className="mb-4 text-[13px] text-muted">
-            Warm-up accounts only ever browse Amazon — searching, reading, wandering sections, adding to cart and emptying it — on a rotating schedule. They are never handed an order until you move one to live.
-          </p>
+      {view === 'warmup' ? (() => {
+        const active = data.accounts
+          .filter((a) => (a.stage ?? 'live') === 'warmup' && a.activity && a.activity_at && now && now - new Date(a.activity_at).getTime() < 180000)
+          .sort((a, b) => new Date(b.activity_at as string).getTime() - new Date(a.activity_at as string).getTime());
+        return (
           <div className="mb-5 rounded-xl border border-line bg-panel p-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="flex flex-col gap-1">
-                <span className="font-mono text-xs text-muted">store</span>
-                <select value={createSupplier} onChange={(e) => setCreateSupplier(e.target.value)} className={`${field} w-36`}>
-                  <option value="amazon">Amazon</option>
-                  <option value="walmart">Walmart</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="font-mono text-xs text-muted">country</span>
-                <select value={createCountry} onChange={(e) => setCreateCountry(e.target.value)} className={`${field} w-36`}>
-                  <option value="us">United States</option>
-                  <option value="il">Israel</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="font-mono text-xs text-muted">how many</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={createCount}
-                  onChange={(e) => setCreateCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
-                  className={`${field} w-24`}
-                />
-              </label>
-              {createCountry === 'us' ? (
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-xs text-muted">carrier</span>
-                  <select value={createCarrier} onChange={(e) => setCreateCarrier(e.target.value)} className={`${field} w-44`}>
-                    <option value="random">Random (recommended)</option>
-                    <option value="verizon_g_home">Verizon</option>
-                    <option value="t_mobile_usa">T-Mobile</option>
-                  </select>
-                </label>
-              ) : null}
-              <button type="button" className={btnAccent} disabled={creating} onClick={() => void createBatch()}>
-                {creating ? 'creating…' : `Create ${createCount} browser${createCount === 1 ? '' : 's'}`}
-              </button>
-              <button type="button" className={btn} disabled={creating} onClick={() => void warmAll()}>
-                Warm up all
-              </button>
+            <div className="mb-3 flex items-center gap-2 font-mono text-xs text-muted">
+              <span className="relative flex h-2 w-2">
+                {active.length > 0 ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-75" /> : null}
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: active.length > 0 ? 'rgb(var(--good))' : 'rgb(var(--muted))' }} />
+              </span>
+              live activity · {active.length} browsing now
             </div>
-            <p className="mt-3 text-[12px] text-muted">
-              Each one is a macOS browser on a mobile IP {createCountry === 'il' ? 'in Israel' : 'in Los Angeles, California'}, named {createSupplier === 'walmart' ? 'WW' : 'AA'}### after the highest so far and tagged {createCountry === 'il' ? 'ISRAEL' : 'US'}, warming on {createSupplier === 'walmart' ? 'Walmart' : 'Amazon'}{createCountry === 'il' ? ' (amazon.com, which Israel uses)' : ''}. They’re spread across your online boxes, built one by one, then start warming on their own.
-            </p>
-            {createMsg ? <p className="mt-2 text-[13px]" style={{ color: 'rgb(var(--accent))' }}>{createMsg}</p> : null}
+            {active.length === 0 ? (
+              <p className="font-mono text-[13px] text-muted">No sessions this moment — they cycle a few at a time across your boxes. Watch here as workers open accounts and browse in real time.</p>
+            ) : (
+              <ul className="space-y-1.5 font-mono text-[13px]">
+                {active.map((a) => (
+                  <li key={a.id} className="flex items-baseline gap-2">
+                    <span className="shrink-0 font-semibold text-fg">{a.label}</span>
+                    <span className="min-w-0 flex-1 truncate text-soft">{a.activity}</span>
+                    <span className="shrink-0 text-xs text-muted">{a.box_name ?? ''}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        </>
-      ) : null}
+        );
+      })() : null}
       {view === 'archived' ? (
         <p className="mb-4 text-[13px] text-muted">
           Trashed accounts do nothing — no orders, no warm-up, no checks. They stay here in case you need their details or history. Restore one to a lane, or remove it for good.
@@ -387,9 +416,9 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
       ) : null}
 
       <section aria-label="Account health" className="mb-5 flex flex-wrap gap-3">
-        <Tile label="Ready" value={`${counts.ready} / ${counts.all}`} tone={counts.ready > 0 ? 'good' : undefined} hint="signed in to Amazon on an online box" />
-        <Tile label="Need attention" value={String(counts.attention)} tone={counts.attention > 0 ? 'bad' : undefined} hint="sign-in, verification, or locked" />
-        <Tile label="Orders today" value={`${ordersToday} / ${capacity}`} hint="placed against total daily capacity" />
+        <Tile label="Ready" value={`${counts.ready} / ${counts.all}`} tone={counts.ready > 0 ? 'good' : undefined} />
+        <Tile label="Need attention" value={String(counts.attention)} tone={counts.attention > 0 ? 'bad' : undefined} />
+        <Tile label="Orders today" value={`${ordersToday} / ${capacity}`} />
       </section>
 
       <div role="tablist" aria-label="Account filter" className="-mx-3 mb-4 flex gap-1 overflow-x-auto border-b border-line px-3 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">

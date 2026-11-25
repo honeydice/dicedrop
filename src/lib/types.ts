@@ -211,6 +211,9 @@ export interface OpsAccount {
   ip_home_region?: string | null;
   ip_check_requested_at?: string | null;
   ip_gate_on?: boolean;
+  /** Real-time: what a worker is doing on this account right now (e.g. "Browsing — searched 'cat food'"). */
+  activity?: string | null;
+  activity_at?: string | null;
   password_set: boolean;
   awaiting_tracking: number;
   signin_requested_at: string | null;
