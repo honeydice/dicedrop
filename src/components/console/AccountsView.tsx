@@ -712,6 +712,13 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                     {a.box_online !== true ? <span className="font-mono text-xs text-muted">vps offline</span> : null}
                   </div>
 
+                  {a.last_error ? (
+                    <div className="mb-4 rounded-xl border border-line bg-panel p-3">
+                      <div className="mb-1 font-mono text-xs text-muted">last error</div>
+                      <div className="whitespace-pre-wrap break-words font-mono text-[13px] text-bad">{a.last_error}</div>
+                    </div>
+                  ) : null}
+
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                     <Panel title="setup">
                       <Rows

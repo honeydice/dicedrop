@@ -453,6 +453,14 @@ export function OrdersView({ initial, initialError }: { initial: OpsOrders | nul
 
               {isOpen ? (
                 <div className="border-t border-divider px-3 pb-4 pt-3 sm:px-5 sm:pl-[46px]">
+                  {o.issue_reason || o.run_note ? (
+                    <div className="mb-3 rounded-lg border border-line bg-raised p-3">
+                      <div className="mb-1 font-mono text-xs text-muted">status</div>
+                      <div className="whitespace-pre-wrap break-words font-mono text-[13px]" style={{ color: o.status === 'issue' ? '#ef4444' : undefined }}>
+                        {o.issue_reason || o.run_note}
+                      </div>
+                    </div>
+                  ) : null}
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-xs sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] sm:gap-x-6">
                     {[
                       ['order', o.order_number],
