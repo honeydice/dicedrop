@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.35.4"
+VERSION = "0.36.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -4006,12 +4006,259 @@ def warm_up_browse(page, minutes, signed_in=True):
     return ", ".join(bits)
 
 
+# ---------------------------------------------------------------- Walmart warm-up (guest browsing)
+WALMART_HOME = "https://www.walmart.com/"
+WALMART_SEARCH = "https://www.walmart.com/search?q="
+WALMART_CART = "https://www.walmart.com/cart"
+WALMART_SEARCHES = ["paper towels", "laundry detergent", "bluetooth speaker", "coffee maker", "air fryer",
+                    "phone charger", "lego set", "hdmi cable", "throw blanket", "dog treats", "water bottle",
+                    "led light bulbs", "backpack", "board games", "kitchen knife set", "shampoo", "desk lamp",
+                    "storage bins", "yoga mat", "office chair", "paper plates", "batteries"]
+WALMART_SECTIONS = [
+    ("Deals", "https://www.walmart.com/shop/deals"),
+    ("Flash deals", "https://www.walmart.com/shop/deals/flash-deals"),
+    ("Electronics", "https://www.walmart.com/cp/electronics/3944"),
+    ("Home", "https://www.walmart.com/cp/home/4044"),
+]
+
+
+def walmart_blocked(page):
+    """True when Walmart's PerimeterX 'Robot or human? / Press & Hold' wall is up instead of the store."""
+    try:
+        u = (page.url or "").lower()
+        if "/blocked" in u or "px-captcha" in u:
+            return True
+        if page.locator("#px-captcha, [id*='px-captcha'], iframe[title*='human']").count() > 0:
+            return True
+        body = (page.inner_text("body", timeout=3000) or "").lower()
+        for sign in ("robot or human", "press & hold", "press and hold", "verify you are a human",
+                     "activity from your device", "are you a human"):
+            if sign in body:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def arrive_via_search(page, term, dest_home, dest_search, dest_host):
+    """Generic store-arrival via a search engine (Google/Bing first, falling back to DuckDuckGo/YouTube on a
+    captcha), landing on the store with the engine as referrer. Returns the engine name used, or ''."""
+    order = SEARCH_ENGINES[:]
+    if random.random() < 0.5:
+        order = [order[1], order[0]] + order[2:]
+    used, referer = "", ""
+    for name, search_url, home in order:
+        try:
+            page.goto(search_url + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=60000)
+            settle(page)
+        except Exception:
+            continue
+        if search_blocked(page):
+            continue
+        used, referer = name, home
+        try:
+            for _ in range(random.randint(1, 3)):
+                page.mouse.wheel(0, random.randint(300, 800))
+                pause(0.8, 2.2)
+        except Exception:
+            pass
+        try:
+            links = page.locator("a[href*='" + dest_host + "']:visible")
+            if links.count() > 0:
+                links.first.evaluate("e => e.removeAttribute('target')")
+                links.first.click(timeout=8000)
+                page.wait_for_load_state("domcontentloaded", timeout=60000)
+                settle(page)
+                if dest_host in (page.url or ""):
+                    return used
+        except Exception:
+            pass
+        break
+    target = (dest_search + term.replace(" ", "+")) if used else dest_home
+    try:
+        if referer:
+            page.goto(target, wait_until="domcontentloaded", timeout=90000, referer=referer)
+        else:
+            page.goto(target, wait_until="domcontentloaded", timeout=90000)
+    except Exception:
+        try:
+            page.goto(dest_home, wait_until="domcontentloaded", timeout=90000)
+        except Exception:
+            pass
+    return used
+
+
+def walmart_warm_up_browse(page, minutes):
+    """Browses Walmart like a shopper (guest): arrives via a search engine or direct, searches, opens products,
+    reads down the page, sometimes carts then empties it. Never buys. Stops at once on Walmart's robot wall."""
+    ends = time.time() + minutes * 60
+    searched, opened, carted, sections = 0, 0, 0, 0
+
+    def check(where):
+        if walmart_blocked(page):
+            raise RobotCheck("Walmart asked whether a person is there (" + where + "). The session stopped at once; nothing was answered.")
+
+    def scroll(times):
+        for _ in range(times):
+            try:
+                if random.random() < 0.6:
+                    human_move(page, random.uniform(250, 1000), random.uniform(200, 600))
+                page.mouse.wheel(0, random.randint(350, 900))
+            except Exception:
+                pass
+            pause(1.2, 3.5)
+
+    def browse_section():
+        nonlocal sections
+        name, url = random.choice(WALMART_SECTIONS)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            check("in " + name)
+            sections += 1
+            scroll(random.randint(2, 5))
+            pause(1.5, 4.0)
+        except Stop:
+            raise
+        except Exception:
+            pass
+
+    def clear_cart():
+        nonlocal carted
+        if carted <= 0:
+            return
+        try:
+            page.goto(WALMART_CART, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            check("in the cart")
+            scroll(1)
+            for _ in range(carted + 3):
+                remove = first_visible(page, "button[aria-label*='Remove'], [data-automation-id='cart-item-remove'], button[link-identifier='itemRemove']")
+                if remove is None:
+                    break
+                try:
+                    remove.click(timeout=6000)
+                    settle(page)
+                    pause(0.8, 1.8)
+                except Exception:
+                    break
+        except Stop:
+            raise
+        except Exception:
+            pass
+
+    # Arrive: ~55% via a search engine, ~45% direct with a varied landing.
+    term = random.choice(WALMART_SEARCHES)
+    if random.random() < 0.55:
+        entry = arrive_via_search(page, term, WALMART_HOME, WALMART_SEARCH, "walmart.com/") or "the web"
+    else:
+        name, url = random.choice([("direct (home)", WALMART_HOME), ("direct (deals)", "https://www.walmart.com/shop/deals"),
+                                   ("direct (search)", WALMART_SEARCH + term.replace(" ", "+"))])
+        entry = name
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+        except Exception:
+            try:
+                page.goto(WALMART_HOME, wait_until="domcontentloaded", timeout=90000)
+            except Exception:
+                pass
+    settle(page)
+    check("after arriving from " + entry)
+    scroll(random.randint(1, 3))
+
+    for term in random.sample(WALMART_SEARCHES, 4):
+        if time.time() > ends:
+            break
+        box = first_visible(page, "input[aria-label='Search'], input[name='q'], input[type='search'], #global-search-input")
+        if box is None:
+            page.goto(WALMART_SEARCH + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
+        else:
+            try:
+                box.click(timeout=6000)
+                box.fill("")
+                box.press_sequentially(term, delay=random.randint(70, 140))
+                pause(0.4, 1.0)
+                box.press("Enter")
+            except Stop:
+                raise
+            except Exception:
+                page.goto(WALMART_SEARCH + term.replace(" ", "+"), wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        check("after a search")
+        searched += 1
+        scroll(random.randint(2, 4))
+        for _ in range(random.randint(1, 2)):
+            if time.time() > ends:
+                break
+            try:
+                links = page.locator("a[href*='/ip/']")
+                count = min(links.count(), 12)
+                if count == 0:
+                    break
+                link = links.nth(random.randint(0, count - 1))
+                address = link.get_attribute("href") or ""
+                try:
+                    link.evaluate("e => e.removeAttribute('target')")
+                    link.click(timeout=8000)
+                    page.wait_for_load_state("domcontentloaded", timeout=60000)
+                except Stop:
+                    raise
+                except Exception:
+                    page.goto(address if address.startswith("http") else "https://www.walmart.com" + address, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+                check("on a product page")
+                opened += 1
+                scroll(random.randint(3, 7))
+                pause(2.0, 6.0)
+                if random.random() < 0.22:
+                    try:
+                        button = first_visible(page, "button[data-automation-id='add-to-cart-button'], button[aria-label*='Add to cart'], button[data-automation-id='atc']")
+                        if button is not None:
+                            button.click(timeout=8000)
+                            settle(page)
+                            check("after adding to the cart")
+                            carted += 1
+                            pause(1.0, 2.5)
+                    except Stop:
+                        raise
+                    except Exception:
+                        pass
+                page.go_back(wait_until="domcontentloaded", timeout=60000)
+                settle(page)
+            except Stop:
+                raise
+            except Exception:
+                break
+        if time.time() < ends and random.random() < 0.5:
+            browse_section()
+    check("at the end")
+    clear_cart()
+    try:
+        page.goto(WALMART_HOME, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        scroll(1)
+    except Exception:
+        pass
+    bits = ["browsed " + str(searched) + " Walmart search" + ("" if searched == 1 else "es"),
+            str(opened) + " product" + ("" if opened == 1 else "s")]
+    if sections:
+        bits.append(str(sections) + " section" + ("" if sections == 1 else "s"))
+    if carted:
+        bits.append("added " + str(carted) + " to cart then emptied it")
+    return ", ".join(bits)
+
+
 def warm_up_job(label):
     problem = ""
     try:
         current_job["text"] = "warming up " + label
 
         def work(page, secrets, stage):
+            site = (secrets.get("supplier") or "amazon").lower()
+            # Walmart profiles warm as guests (no Walmart sign-in flow yet) — this ages the profile + IP the same way.
+            if site == "walmart":
+                stage[0] = "warming up Walmart as a guest"
+                return walmart_warm_up_browse(page, random.uniform(3.0, 5.5))
             # No Amazon account yet (no saved password): warm the fresh profile as a guest to build cookies and
             # history on the profile + IP before the account is created. No sign-in attempted.
             if not secrets.get("password"):
@@ -4030,7 +4277,7 @@ def warm_up_job(label):
             label, lambda text: None, work, reason="warm-up",
             summary=lambda r, e: (False, e) if e else (True, str(r or "browsed")))
         if problem and "whether a person is there" in problem:
-            report(label, robot_check=True, error="Amazon is asking this account to confirm a person is there. Open its browser and answer it. Warm-up and orders are paused for it until then.")
+            report(label, robot_check=True, error="The store is asking this account to confirm a person is there. Open its browser and answer it. Warm-up and orders are paused for it until then.")
         log("warm-up for " + label + " finished" + (": " + problem if problem else ""))
     except Exception as failure:
         problem = "The warm-up could not run: " + str(failure)[:200]

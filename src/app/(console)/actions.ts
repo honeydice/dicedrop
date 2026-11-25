@@ -503,7 +503,7 @@ export async function setAccountStage(id: string, stage: 'live' | 'warmup' | 'ar
  * browser (or a chosen one), spreads them across the available boxes, and queues each for Multilogin
  * profile creation (macOS + mobile proxy, US/California/Los Angeles). They start guest-warming once built.
  */
-export async function createBrowsers(count: number, spec: { carrier?: string } = {}): Promise<Result> {
+export async function createBrowsers(count: number, spec: { carrier?: string; supplier?: string } = {}): Promise<Result> {
   try {
     const ctx = await operatorDb();
     if (!ctx) return DENIED;

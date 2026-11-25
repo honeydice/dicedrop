@@ -132,6 +132,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   // Create browsers (Warm up tab): bulk-mint AA### Multilogin profiles and queue them for warm-up.
   const [createCount, setCreateCount] = useState(10);
   const [createCarrier, setCreateCarrier] = useState('random');
+  const [createSupplier, setCreateSupplier] = useState('amazon');
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState('');
   const createBatch = async () => {
@@ -139,7 +140,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
     setError('');
     setCreateMsg('');
     try {
-      const r = await createBrowsers(createCount, createCarrier === 'random' ? {} : { carrier: createCarrier });
+      const r = await createBrowsers(createCount, { supplier: createSupplier, ...(createCarrier === 'random' ? {} : { carrier: createCarrier }) });
       if (!r.ok) setError(r.error);
       else setCreateMsg(r.note || 'Created.');
       await refresh();
@@ -320,6 +321,13 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           <div className="mb-5 rounded-xl border border-line bg-panel p-4">
             <div className="flex flex-wrap items-end gap-3">
               <label className="flex flex-col gap-1">
+                <span className="font-mono text-xs text-muted">store</span>
+                <select value={createSupplier} onChange={(e) => setCreateSupplier(e.target.value)} className={`${field} w-36`}>
+                  <option value="amazon">Amazon</option>
+                  <option value="walmart">Walmart</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
                 <span className="font-mono text-xs text-muted">how many</span>
                 <input
                   type="number"
@@ -346,7 +354,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </button>
             </div>
             <p className="mt-3 text-[12px] text-muted">
-              Each one is a macOS browser on a mobile IP in Los Angeles, California, named AA### after the highest so far. They’re spread across your online boxes, built one by one, then start warming on their own.
+              Each one is a macOS browser on a mobile IP in Los Angeles, California, named {createSupplier === 'walmart' ? 'WW' : 'AA'}### after the highest so far, and warms on {createSupplier === 'walmart' ? 'Walmart' : 'Amazon'}. They’re spread across your online boxes, built one by one, then start warming on their own.
             </p>
             {createMsg ? <p className="mt-2 text-[13px]" style={{ color: 'rgb(var(--accent))' }}>{createMsg}</p> : null}
           </div>
