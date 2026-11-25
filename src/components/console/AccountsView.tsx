@@ -125,7 +125,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState('');
   // Accounts are grouped into one folder per supplier. One folder is open at a time.
-  const [folder, setFolder] = useState('amazon');
+  const [folder, setFolder] = useState('');
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState('');
@@ -315,11 +315,11 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             onClick={() => { setView(v); setFilter('all'); setOpen(''); }}
             className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border px-4 text-sm font-semibold"
             style={view === v
-              ? { background: 'rgb(var(--accent))', borderColor: 'rgb(var(--accent))', color: '#0b0b0b' }
+              ? { background: 'rgb(var(--accent))', borderColor: 'rgb(var(--accent))', color: '#fff' }
               : { background: 'transparent', borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
           >
             {label}
-            <span className="rounded-full px-[7px] py-0.5 font-mono text-xs" style={view === v ? { background: 'rgba(0,0,0,.18)' } : { background: 'var(--chip)' }}>{n}</span>
+            <span className="rounded-full px-[7px] py-0.5 font-mono text-xs" style={view === v ? { background: 'rgba(255,255,255,.22)', color: '#fff' } : { background: 'var(--chip)' }}>{n}</span>
           </button>
         ))}
       </div>
@@ -388,7 +388,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
 
       <section aria-label="Account health" className="mb-5 flex flex-wrap gap-3">
         <Tile label="Ready" value={`${counts.ready} / ${counts.all}`} tone={counts.ready > 0 ? 'good' : undefined} hint="signed in to Amazon on an online box" />
-        <Tile label="Need attention" value={String(counts.attention)} tone={counts.attention > 0 ? 'warn' : undefined} hint="sign-in, verification, or locked" />
+        <Tile label="Need attention" value={String(counts.attention)} tone={counts.attention > 0 ? 'bad' : undefined} hint="sign-in, verification, or locked" />
         <Tile label="Orders today" value={`${ordersToday} / ${capacity}`} hint="placed against total daily capacity" />
       </section>
 
