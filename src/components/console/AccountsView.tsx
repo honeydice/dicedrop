@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setIpTarget, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -61,7 +61,9 @@ function warmSummary(a: OpsAccount): string {
 
 /** One-line summary of the account's last IP-gate check. */
 function ipSummary(a: OpsAccount): string {
-  const l = a.ip_last;
+  if (a.ip_check_requested_at) return 'checking…';
+  const l = a.ip_last as (OpsAccount['ip_last'] & { error?: string }) | null | undefined;
+  if (l && l.error && !l.ip) return `couldn't check: ${l.error}`;
   if (!l || !l.ip) {
     if (a.ip_home_carrier || a.ip_home_region) return `home: ${[a.ip_home_carrier, a.ip_home_region].filter(Boolean).join(', ')}`;
     return 'not checked yet';
@@ -668,6 +670,10 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         <input id={`ipt-${a.id}`} type="text" defaultValue={a.ip_target_location ?? ''} placeholder="e.g. California or Rocklin, CA" disabled={busy}
                           className={`${field} min-w-0`}
                           onBlur={(e) => { const v = e.target.value.trim(); if (v !== (a.ip_target_location ?? '')) void run(() => setIpTarget(a.id, v)); }} />
+                        <button type="button" disabled={busy || !!a.ip_check_requested_at} className={btn}
+                          onClick={() => void run(() => requestIpCheck(a.id))}>
+                          {a.ip_check_requested_at ? 'checking…' : 'Check IP'}
+                        </button>
                       </div>
                     </Panel>
 

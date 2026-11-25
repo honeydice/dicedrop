@@ -201,6 +201,7 @@ export interface OpsAccount {
   ip_target_location?: string | null;
   ip_home_carrier?: string | null;
   ip_home_region?: string | null;
+  ip_check_requested_at?: string | null;
   password_set: boolean;
   awaiting_tracking: number;
   signin_requested_at: string | null;

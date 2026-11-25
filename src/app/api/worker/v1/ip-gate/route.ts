@@ -42,6 +42,9 @@ export async function POST(req: Request) {
     } else if (op === 'result') {
       rpc = 'dd_worker_ip_gate_result';
       args = { p_token: auth.key, p_label: String(body.account || ''), p_result: body.result ?? {}, p_outcome: String(body.outcome || '') };
+    } else if (op === 'checked') {
+      rpc = 'dd_worker_ip_checked';
+      args = { p_token: auth.key, p_label: String(body.account || ''), p_result: body.result ?? {} };
     } else {
       return apiError(400, 'bad_op', 'Unknown ip-gate op.');
     }

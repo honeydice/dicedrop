@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.34.4"
+VERSION = "0.34.5"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1266,6 +1266,39 @@ def ip_gate_open(label, secrets, reason):
     except Exception:
         pass
     return False, "No clean mobile IP after 10 tries. Marked for help; not opened."
+
+
+def run_account_ip_check(label):
+    """A one-off, on-demand proxy check for one account (the console 'Check IP' button). Reads the account's
+    Multilogin proxy and checks the IP through ipapi.is — no browser opens, no rotation. For looking before
+    you build the Amazon account. Needs no Amazon password."""
+    out = {"account": label}
+    try:
+        secrets = call("/api/worker/v1/accounts/secrets", {"account": label})
+    except Exception as failure:
+        out["error"] = "could not load the account: " + str(failure)[:160]
+        return out
+    if (secrets.get("engine") or "multilogin") != "multilogin":
+        out["error"] = "not a Multilogin account — nothing to check here"
+        return out
+    try:
+        _folder, pid = mlx_find(label, secrets)
+        meta = mlx_request("POST", MLX_API + "/profile/metas", {"ids": [pid]}, token=mlx_token())
+        proxy = (((meta.get("data") or {}).get("profiles") or [{}])[0].get("parameters") or {}).get("proxy") or {}
+    except Exception as failure:
+        out["error"] = "could not read the profile's proxy: " + str(failure)[:180]
+        return out
+    if not proxy.get("host"):
+        out["error"] = "this profile has no external proxy (set a Mobile proxy on it in Multilogin first)"
+        return out
+    if not ipapi_key_box:
+        out["error"] = "no ipapi key on the box"
+        return out
+    try:
+        out.update(ip_verdict(ipapi_check(proxy, ipapi_key_box)))
+    except Exception as failure:
+        out["error"] = "ipapi.is error through the proxy: " + str(failure)[:160]
+    return out
 
 
 DEVICE_JS = """() => {
@@ -4591,6 +4624,17 @@ def main():
                     log("ip probe for " + str(probe_name) + ": " + json.dumps({k: v for k, v in res.items() if k != "password"})[:240])
                 except Exception as failure:
                     log("could not report the ip probe: " + str(failure)[:160])
+            # On-demand "Check IP" from the console — runs even while paused, no browser opens.
+            for job in reply.get("ip_check_jobs", []):
+                clabel = job.get("account_label") or ""
+                if not clabel:
+                    continue
+                res = run_account_ip_check(clabel)
+                try:
+                    call("/api/worker/v1/ip-gate", {"op": "checked", "account": clabel, "result": res})
+                    log("ip check for " + clabel + ": " + json.dumps({k: v for k, v in res.items() if k != "password"})[:200])
+                except Exception as failure:
+                    log("could not report the ip check for " + clabel + ": " + str(failure)[:140])
             if reply.get("desired_state") != "pause":
                 for account in reply.get("accounts", []):
                     label = account.get("label")

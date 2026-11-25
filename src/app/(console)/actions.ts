@@ -448,6 +448,18 @@ export async function setIpGate(enabled: boolean, beforeOrders: boolean, budget:
   }
 }
 
+/** Queues a one-off on-demand proxy IP check for an account (no browser opens) — e.g. before creating the Amazon account. */
+export async function requestIpCheck(id: string): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_request_ip_check', { p_account: id });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Sets an account's optional IP target location (state or "City, State") used to steer its first mobile IP. */
 export async function setIpTarget(id: string, target: string): Promise<Result> {
   try {
