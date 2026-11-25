@@ -448,6 +448,18 @@ export async function setIpGate(enabled: boolean, beforeOrders: boolean, budget:
   }
 }
 
+/** Turns the automatic IP gate on/off for a single account (checked before its warm-up / first launch). */
+export async function setAccountIpGate(id: string, on: boolean): Promise<Result> {
+  try {
+    const ctx = await operatorDb();
+    if (!ctx) return DENIED;
+    const { error } = await ctx.db.rpc('dd_ops_set_account_ipgate', { p_account: id, p_on: on });
+    return done(error);
+  } catch {
+    return FAILED;
+  }
+}
+
 /** Queues a one-off on-demand proxy IP check for an account (no browser opens) — e.g. before creating the Amazon account. */
 export async function requestIpCheck(id: string): Promise<Result> {
   try {

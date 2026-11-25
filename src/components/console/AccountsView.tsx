@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clearHold, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
+import { clearHold, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setAccountIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
 import type { OpsAccount, OpsAccounts } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
@@ -255,36 +255,6 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`data:image/jpeg;base64,${shot.image}`} alt={`What the worker saw on ${shot.label}`} className="block w-full" />
           </div>
-        </div>
-      ) : null}
-
-      {data.ip_gate ? (
-        <div className="mb-5 rounded-lg border p-3" style={{ borderColor: 'rgb(var(--line))' }}>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-            <span className="font-semibold">IP gate</span>
-            <button
-              type="button"
-              disabled={busy}
-              className={btn}
-              style={data.ip_gate.enabled ? { borderColor: TONE.good, color: TONE.good } : { borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
-              onClick={() => { const g = data.ip_gate!; void run(() => setIpGate(!g.enabled, g.before_orders, g.budget)); }}
-            >
-              {data.ip_gate.enabled ? 'ON · checking IPs' : 'OFF · accounts as-is'}
-            </button>
-            <label className="inline-flex items-center gap-2 text-muted">
-              <input type="checkbox" checked={data.ip_gate.before_orders} disabled={busy || !data.ip_gate.enabled}
-                onChange={(e) => { const g = data.ip_gate!; void run(() => setIpGate(g.enabled, e.target.checked, g.budget)); }} />
-              also before orders
-            </label>
-            <span className="text-muted">today: <span className="font-mono" style={{ color: data.ip_gate.used >= data.ip_gate.budget ? TONE.bad : undefined }}>{data.ip_gate.used.toLocaleString()} / {data.ip_gate.budget.toLocaleString()}</span> checks</span>
-            <label className="inline-flex items-center gap-2 text-muted">budget/day
-              <input type="number" min={1} defaultValue={data.ip_gate.budget} disabled={busy} className={`${field} w-24`}
-                onBlur={(e) => { const g = data.ip_gate!; const v = parseInt(e.target.value || '0', 10); if (v > 0 && v !== g.budget) void run(() => setIpGate(g.enabled, g.before_orders, v)); }} />
-            </label>
-          </div>
-          {data.ip_gate.enabled ? (
-            <p className="mt-2 text-[12px] text-muted">Before each warm-up and first launch, the worker checks the profile&apos;s mobile IP and rotates the session until it reads as a clean mobile IP (not a proxy, VPN, or datacenter). An account that can&apos;t get a clean IP after 10 tries is marked &quot;help&quot; and not opened.</p>
-          ) : null}
         </div>
       ) : null}
 
@@ -666,6 +636,14 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
                         </select>
                       </div>
                       <div className="mt-3 flex items-center gap-3">
+                        <span className="font-mono text-xs text-muted">ip gate</span>
+                        <button type="button" disabled={busy} className={btn}
+                          style={a.ip_gate_on ? { borderColor: TONE.good, color: TONE.good } : { borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
+                          onClick={() => void run(() => setAccountIpGate(a.id, !a.ip_gate_on))}>
+                          {a.ip_gate_on ? 'on · checked before open' : 'off'}
+                        </button>
+                      </div>
+                      <div className="mt-3 flex items-center gap-3">
                         <label htmlFor={`ipt-${a.id}`} className="font-mono text-xs text-muted">ip target</label>
                         <input id={`ipt-${a.id}`} type="text" defaultValue={a.ip_target_location ?? ''} placeholder="e.g. California or Rocklin, CA" disabled={busy}
                           className={`${field} min-w-0`}
@@ -782,6 +760,21 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           );
         })}
       </Card>
+      {data.ip_gate ? (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted">
+          <span>IP gate is per-account (toggle it on an account). Global:</span>
+          <label className="inline-flex items-center gap-1.5">
+            <input type="checkbox" checked={data.ip_gate.before_orders} disabled={busy}
+              onChange={(e) => { const g = data.ip_gate!; void run(() => setIpGate(g.enabled, e.target.checked, g.budget)); }} />
+            also check before orders
+          </label>
+          <span>checks today: <span className="font-mono" style={{ color: data.ip_gate.used >= data.ip_gate.budget ? TONE.bad : undefined }}>{data.ip_gate.used.toLocaleString()} / {data.ip_gate.budget.toLocaleString()}</span></span>
+          <label className="inline-flex items-center gap-1.5">budget/day
+            <input type="number" min={1} defaultValue={data.ip_gate.budget} disabled={busy} className={`${field} w-20`}
+              onBlur={(e) => { const g = data.ip_gate!; const v = parseInt(e.target.value || '0', 10); if (v > 0 && v !== g.budget) void run(() => setIpGate(g.enabled, g.before_orders, v)); }} />
+          </label>
+        </div>
+      ) : null}
     </>
   );
 }

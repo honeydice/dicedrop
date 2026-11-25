@@ -202,6 +202,7 @@ export interface OpsAccount {
   ip_home_carrier?: string | null;
   ip_home_region?: string | null;
   ip_check_requested_at?: string | null;
+  ip_gate_on?: boolean;
   password_set: boolean;
   awaiting_tracking: number;
   signin_requested_at: string | null;
