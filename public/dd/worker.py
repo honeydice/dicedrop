@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.34.5"
+VERSION = "0.34.7"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3654,9 +3654,10 @@ WARM_SECTIONS = [
 ]
 
 
-def warm_up_browse(page, minutes):
+def warm_up_browse(page, minutes, signed_in=True):
     """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
-    It never adds to the cart and never goes to checkout. Returns a short summary."""
+    It never adds to the cart and never goes to checkout. With signed_in=False it browses as a guest (no account yet),
+    to age a fresh profile and its IP before the Amazon account is created. Returns a short summary."""
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
 
@@ -3812,8 +3813,10 @@ def warm_up_browse(page, minutes):
     still_welcome("at the end")
     # Take back out anything that was dropped in the cart — a warm-up account never keeps a cart or buys.
     clear_cart()
+    # A signed-in account ends on Your Orders; a guest (no account yet) ends on the home page — hitting Your
+    # Orders signed-out would just bounce to the sign-in screen.
     try:
-        page.goto(ACCOUNT_PAGE, wait_until="domcontentloaded", timeout=90000)
+        page.goto(ACCOUNT_PAGE if signed_in else "https://www.amazon.com/", wait_until="domcontentloaded", timeout=90000)
         settle(page)
         scroll(1)
     except Exception:
@@ -3833,6 +3836,11 @@ def warm_up_job(label):
         current_job["text"] = "warming up " + label
 
         def work(page, secrets, stage):
+            # No Amazon account yet (no saved password): warm the fresh profile as a guest to build cookies and
+            # history on the profile + IP before the account is created. No sign-in attempted.
+            if not secrets.get("password"):
+                stage[0] = "warming up as a guest"
+                return warm_up_browse(page, random.uniform(3.0, 5.5), signed_in=False)
             stage[0] = "signing in on Amazon"
             state, reason = amazon_sign_in(page, label, secrets)
             if state != "signed_in":
