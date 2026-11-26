@@ -231,6 +231,13 @@ export interface OpsAccount {
   totp_code: string | null;
 }
 
+export interface OpsDataUsage {
+  today_bytes: number;
+  month_bytes: number;
+  total_bytes: number;
+  daily: { day: string; bytes: number }[];
+}
+
 export interface OpsAccounts {
   accounts: OpsAccount[];
   totp_expires_in: number;

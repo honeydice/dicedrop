@@ -29,6 +29,7 @@ export async function POST(req: Request) {
       p_result: typeof body.result === 'string' ? body.result.slice(0, 600) : null,
       p_exit_ip: typeof body.exit_ip === 'string' ? body.exit_ip.slice(0, 45) : null,
       p_seconds: typeof body.seconds === 'number' && Number.isFinite(body.seconds) ? Math.round(body.seconds) : null,
+      p_bytes: typeof body.bytes === 'number' && Number.isFinite(body.bytes) && body.bytes > 0 ? Math.round(body.bytes) : 0,
     });
     if (error) return fromDbError(error);
     return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });

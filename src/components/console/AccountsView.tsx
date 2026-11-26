@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { clearHold, createBrowsers, setAllWarmup, removeAccount, setOrdering, setAccountEngine, setAccountStage, setIpGate, setAccountIpGate, setIpTarget, requestIpCheck, setLiveBrowser, getAccountLog, getAccountPassword, getAllAccountLogs, type AllAccessLine, getSnapshot, requestSignin, setWarmup, updateAccount, type AccessLine, type AccountPatch, type Result } from '@/app/(console)/actions';
 import { cardLabel, money, timeAgo } from '@/lib/format';
-import type { OpsAccount, OpsAccounts } from '@/lib/types';
+import type { OpsAccount, OpsAccounts, OpsDataUsage } from '@/lib/types';
 import { Badge, btn, btnAccent, Card, Dot, ErrorNote, field, PageHead, sessionLabel, Tile, TONE } from './ui';
 import { usePaged } from './Pager';
 import { useLive, useNow } from './useLive';
@@ -117,7 +117,15 @@ function Rows({ items }: { items: [string, string][] }) {
   );
 }
 
-export function AccountsView({ initial, initialError }: { initial: OpsAccounts; initialError: string }) {
+function fmtBytes(n: number): string {
+  const b = Number(n) || 0;
+  if (b >= 1e9) return (b / 1e9).toFixed(b >= 1e10 ? 0 : 1) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(b >= 1e7 ? 0 : 1) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+export function AccountsView({ initial, initialError, dataUsage }: { initial: OpsAccounts; initialError: string; dataUsage?: OpsDataUsage | null }) {
   const { data, error, setError, refresh } = useLive<OpsAccounts>('dd_ops_accounts', undefined, initial, initialError);
   const now = useNow();
   // The lanes: live (order-eligible, the default), warm-up (browse-only), and archived (Trash — inert).
@@ -396,6 +404,41 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
           return `next ${new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
         };
         return (
+          <>
+          {dataUsage ? (
+            <div className="mb-5 rounded-xl border border-line bg-panel p-4">
+              <div className="mb-3 font-mono text-xs text-muted">proxy data used</div>
+              <div className="grid grid-cols-3 gap-3 font-mono">
+                <div>
+                  <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.today_bytes)}</div>
+                  <div className="text-xs text-muted">today</div>
+                </div>
+                <div>
+                  <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.month_bytes)}</div>
+                  <div className="text-xs text-muted">this month</div>
+                </div>
+                <div>
+                  <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.total_bytes)}</div>
+                  <div className="text-xs text-muted">all time</div>
+                </div>
+              </div>
+              {dataUsage.daily.length > 0 ? (
+                <div className="mt-3 flex items-end gap-1 border-t border-line pt-3" style={{ height: 44 }}>
+                  {(() => {
+                    const max = Math.max(...dataUsage.daily.map((d) => d.bytes), 1);
+                    return dataUsage.daily.map((d) => (
+                      <div
+                        key={d.day}
+                        title={`${d.day}: ${fmtBytes(d.bytes)}`}
+                        className="flex-1 rounded-sm"
+                        style={{ height: `${Math.max(3, (d.bytes / max) * 36)}px`, background: 'rgb(var(--accent))', opacity: 0.55 }}
+                      />
+                    ));
+                  })()}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="mb-5 rounded-xl border border-line bg-panel p-4">
             <div className="mb-3 flex items-center gap-2 font-mono text-xs text-muted">
               <span className="relative flex h-2 w-2">
@@ -433,6 +476,7 @@ export function AccountsView({ initial, initialError }: { initial: OpsAccounts; 
               </div>
             ) : null}
           </div>
+          </>
         );
       })() : null}
       {view === 'archived' ? (

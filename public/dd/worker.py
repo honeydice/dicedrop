@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.39.0"
+VERSION = "0.39.1"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1453,12 +1453,31 @@ class RobotCheck(Stop):
     """Amazon showed its "are you a person" page."""
 
 
+def attach_bytes_meter(page, meter):
+    """Sums the encoded (over-the-wire) bytes for this session via CDP, for the proxy-data gauge. Best-effort;
+    if anything about the CDP hookup fails the session still runs, the meter just stays at 0."""
+    try:
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Network.enable")
+
+        def on_finished(evt):
+            try:
+                meter["bytes"] += int(evt.get("encodedDataLength") or 0)
+            except Exception:
+                pass
+
+        cdp.on("Network.loadingFinished", on_finished)
+    except Exception:
+        pass
+
+
 def run_in_account_browser(label, note, work, reason="", summary=None):
     """Opens the account's own Kameleo browser on its dedicated proxy, runs `work(page, secrets)`, and always
     takes a screenshot and closes the profile afterwards. Returns (result, error text, screenshot, outgoing ip)."""
     profile_id = ""
     engine = "kameleo"
     result, error, shot, exit_ip = None, "", "", ""
+    data_meter = {"bytes": 0}
     stage = ["getting ready"]
     opened_at = time.time()
     saved_stderr = capture_stderr()
@@ -1520,6 +1539,7 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
             page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(30000)
             watch(page)
+            attach_bytes_meter(page, data_meter)
             try:
                 stage[0] = "checking the proxy"
                 note("checking the proxy")
@@ -1568,7 +1588,8 @@ def run_in_account_browser(label, note, work, reason="", summary=None):
             if summary:
                 fine, outcome = summary(result, error)
             call("/api/worker/v1/accounts/access", {"account": label, "reason": reason or "session", "ok": bool(fine),
-                 "result": str(outcome or "")[:600], "exit_ip": exit_ip, "seconds": int(time.time() - opened_at)})
+                 "result": str(outcome or "")[:600], "exit_ip": exit_ip, "seconds": int(time.time() - opened_at),
+                 "bytes": int(data_meter.get("bytes") or 0)})
         except Exception as failure:
             log("could not write the access log: " + str(failure)[:200])
     return result, error, shot, exit_ip
