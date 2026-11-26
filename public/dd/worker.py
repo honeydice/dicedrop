@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.38.2"
+VERSION = "0.39.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -4077,6 +4077,49 @@ def walmart_blocked(page):
     return False
 
 
+def clear_walmart_site_data(page):
+    """Clears Walmart's cookies + cached site data for this profile, then reloads the home page fresh.
+    PerimeterX keeps its 'Press & Hold' wall up with cookies (_px, _pxvid, pxcts); wiping them and the
+    cached data and loading a clean page usually drops the wall — the same trick that works for a person."""
+    ok = False
+    try:
+        cdp = page.context.new_cdp_session(page)
+        try:
+            cdp.send("Network.clearBrowserCache")
+            ok = True
+        except Exception:
+            pass
+        for origin in ("https://www.walmart.com", "https://walmart.com"):
+            try:
+                cdp.send("Storage.clearDataForOrigin", {"origin": origin, "storageTypes": "all"})
+                ok = True
+            except Exception:
+                pass
+        try:
+            cdp.detach()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # Belt and suspenders: drop Walmart's cookies through Playwright too (guest warm-up, so no login to lose).
+    try:
+        page.context.clear_cookies(domain="walmart.com")
+        ok = True
+    except Exception:
+        try:
+            page.context.clear_cookies()
+            ok = True
+        except Exception:
+            pass
+    # Load a clean page so a new, unchallenged session starts instead of the held wall.
+    try:
+        page.goto(WALMART_HOME, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+    except Exception:
+        pass
+    return ok
+
+
 def arrive_via_search(page, term, dest_home, dest_search, dest_host, lead_google=False):
     """Generic store-arrival via a search engine (Google/Bing first, falling back to DuckDuckGo/YouTube on a
     captcha), landing on the store with the engine as referrer. Records the Google gauge in warm_signal.
@@ -4143,6 +4186,7 @@ def walmart_warm_up_browse(page, minutes, label=""):
     reads down the page, sometimes carts then empties it. Never buys. Stops at once on Walmart's robot wall."""
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
+    cleared = {"tries": 0}
 
     def act(text):
         if label:
@@ -4150,6 +4194,15 @@ def walmart_warm_up_browse(page, minutes, label=""):
 
     def check(where):
         if walmart_blocked(page):
+            # Known Walmart fix: clear its cookies + cached site data and reload, and the Press & Hold
+            # wall usually drops. Try that (up to twice) before giving up on the session.
+            if cleared["tries"] < 2:
+                cleared["tries"] += 1
+                act("Clearing Walmart cache")
+                clear_walmart_site_data(page)
+                pause(1.5, 3.0)
+                if not walmart_blocked(page):
+                    return  # recovered — carry on browsing
             raise RobotCheck("Walmart asked whether a person is there (" + where + "). The session stopped at once; nothing was answered.")
 
     def scroll(times):
