@@ -197,6 +197,8 @@ export interface OpsAccount {
   browser_note?: string | null;
   warmup_until?: string | null;
   warmup_days?: number | null;
+  /** When the account entered warm-up (its creation date); used to show "N Days Warming". */
+  warmup_started_at?: string | null;
   warmup_last_at?: string | null;
   warmup_sessions?: number;
   warmup_next_at?: string | null;

@@ -50,6 +50,14 @@ function warmupLeft(a: OpsAccount): string {
   return `${left} · ${a.warmup_sessions ?? 0} session${(a.warmup_sessions ?? 0) === 1 ? '' : 's'}`;
 }
 
+/** Whole days an account has been in warm-up (from its creation date). Null unless it's a warm-up account. */
+function daysWarming(a: OpsAccount): number | null {
+  if ((a.stage ?? 'live') !== 'warmup' || !a.warmup_started_at) return null;
+  const ms = Date.now() - new Date(a.warmup_started_at).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return Math.floor(ms / 86400000);
+}
+
 /** Warm-up lane summary: how many sessions it has done and when the next one is due. */
 function warmSummary(a: OpsAccount): string {
   if ((a.stage ?? 'live') !== 'warmup') return warmupLeft(a);
@@ -607,6 +615,19 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                     >
                       {a.country === 'il' ? 'ISRAEL' : 'US'}
                     </span>
+                    {(() => {
+                      const d = daysWarming(a);
+                      if (d === null) return null;
+                      return (
+                        <span
+                          className="shrink-0 rounded px-1.5 py-px font-mono text-[10px] font-semibold"
+                          style={{ background: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' }}
+                          title={a.warmup_started_at ? `Warming since ${new Date(a.warmup_started_at).toLocaleDateString()}` : undefined}
+                        >
+                          {d >= 1 ? `${d} Day${d === 1 ? '' : 's'} Warming` : 'Warming · Day 1'}
+                        </span>
+                      );
+                    })()}
                     <span className="font-mono text-xs" style={{ color: st.color }}>
                       {st.text}
                     </span>
