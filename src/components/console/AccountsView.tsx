@@ -552,11 +552,11 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                   onClick={() => setOpen(isOpen ? '' : a.id)}
                   className="flex min-h-[48px] min-w-0 flex-1 basis-full items-center gap-3 bg-transparent py-2 pl-4 pr-3 text-left hover:bg-raised/60 sm:basis-auto sm:gap-6 sm:pl-12 sm:pr-2"
                 >
-                  <span className="flex min-w-0 flex-1 items-center gap-3 sm:w-[240px] sm:flex-none sm:shrink-0">
+                  <span className="flex min-w-0 flex-1 items-center gap-3 sm:w-[300px] sm:flex-none sm:shrink-0">
                     <Dot color={st.color} />
-                    <span className="font-mono text-[13px] font-medium text-fg">{a.label}</span>
+                    <span className="shrink-0 font-mono text-[13px] font-medium text-fg">{a.label}</span>
                     <span
-                      className="rounded px-1.5 py-px font-mono text-[10px] font-semibold"
+                      className="shrink-0 rounded px-1.5 py-px font-mono text-[10px] font-semibold"
                       style={a.country === 'il'
                         ? { background: 'rgba(37,99,235,0.20)', color: 'rgb(96,165,250)' }
                         : { background: 'rgba(96,165,250,0.12)', color: 'rgb(147,197,253)' }}
@@ -576,7 +576,7 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                         </span>
                       );
                     })()}
-                    <span className="font-mono text-xs" style={{ color: st.color }}>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs" style={{ color: st.color }} title={st.text}>
                       {st.text}
                     </span>
                   </span>
