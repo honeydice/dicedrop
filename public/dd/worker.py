@@ -3939,12 +3939,33 @@ def enter_amazon_direct(page, term):
     return name
 
 
+def block_heavy_assets(page):
+    """During warm-up, abort image / media / font requests so the session spends almost no proxy data on heavy
+    binary assets. The HTML, CSS and scripts still load, so the page renders enough to look like a real visit and
+    record history — the same throttling AutoDS and similar tools use. Best-effort; never breaks the session."""
+    try:
+        def handler(route):
+            try:
+                if route.request.resource_type in ("image", "media", "font"):
+                    return route.abort()
+                return route.continue_()
+            except Exception:
+                try:
+                    return route.continue_()
+                except Exception:
+                    return
+        page.route("**/*", handler)
+    except Exception:
+        pass
+
+
 def warm_up_browse(page, minutes, signed_in=True, label=""):
     """Browses Amazon the way a shopper does: searches, opens a few products, reads down the page, looks at Your Orders.
     It never adds to the cart and never goes to checkout. With signed_in=False it browses as a guest (no account yet),
     to age a fresh profile and its IP before the Amazon account is created. Returns a short summary."""
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
+    block_heavy_assets(page)  # drop images/media/fonts this session to save proxy data
 
     def act(text):
         # Report what this account is doing right now, for the live activity feed on the warm-up page.
@@ -4277,6 +4298,7 @@ def walmart_warm_up_browse(page, minutes, label=""):
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
     cleared = {"tries": 0}
+    block_heavy_assets(page)  # drop images/media/fonts this session to save proxy data
 
     def act(text):
         if label:
@@ -4489,6 +4511,7 @@ def homedepot_warm_up_browse(page, minutes, label=""):
     for drills/screwdrivers/etc., opens products, reads, sometimes carts then empties. Never buys. Stops on the bot wall."""
     ends = time.time() + minutes * 60
     searched, opened, carted, sections = 0, 0, 0, 0
+    block_heavy_assets(page)  # drop images/media/fonts this session to save proxy data
 
     def act(text):
         if label:
