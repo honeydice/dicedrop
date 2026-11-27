@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.41.3"
+VERSION = "0.41.4"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -3940,9 +3940,22 @@ def enter_amazon_direct(page, term):
 
 
 def block_heavy_assets(page):
-    """During warm-up, abort image / media / font requests so the session spends almost no proxy data on heavy
-    binary assets. The HTML, CSS and scripts still load, so the page renders enough to look like a real visit and
-    record history — the same throttling AutoDS and similar tools use. Best-effort; never breaks the session."""
+    """During warm-up, block image / media / font downloads so the session spends almost no proxy data on heavy
+    binary assets. HTML/CSS/JS still load, so the page renders enough to look like a real visit and record history.
+    Primary block is CDP Network.setBlockedURLs (the Multilogin browser honors it; Playwright's page.route often
+    does not through a CDP-attached antidetect browser). Playwright route is kept as a backup. Best-effort."""
+    patterns = ["*.jpg*", "*.jpeg*", "*.png*", "*.gif*", "*.webp*", "*.avif*", "*.svg*", "*.bmp*", "*.ico*",
+                "*.mp4*", "*.webm*", "*.mov*", "*.m4v*", "*.mp3*", "*.m4a*", "*.woff*", "*.woff2*", "*.ttf*", "*.otf*",
+                "*.eot*", "*format=jpg*", "*format=png*", "*format=webp*"]
+    try:
+        cdp = page.context.new_cdp_session(page)
+        try:
+            cdp.send("Network.enable")
+        except Exception:
+            pass
+        cdp.send("Network.setBlockedURLs", {"urls": patterns})
+    except Exception:
+        pass
     try:
         def handler(route):
             try:
