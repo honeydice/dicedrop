@@ -249,6 +249,15 @@ export interface OpsAccounts {
   ip_gate?: { enabled: boolean; before_orders: boolean; budget: number; used: number } | null;
 }
 
+export interface OpsWaitlistEntry {
+  id: string;
+  email: string;
+  marketplace: string | null;
+  monthly_orders: string | null;
+  comment: string | null;
+  created_at: string;
+}
+
 export interface OpsProxy {
   id: string;
   provider: string | null;

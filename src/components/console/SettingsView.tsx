@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { addCard, clearMultilogin, saveMultilogin, clearKameleo, clearTotp, saveKameleo, importProxies, removeCard, removeProxies, setAccountsPerBox, setCheckInterval, setOrdersAtOnce, disconnectContabo, restoreContaboServers, saveContabo, setTimezone, setTotp, syncContabo, updateSelector } from '@/app/(console)/actions';
 import { ThemeToggle } from '@/components/admin/ThemeToggle';
 import type { SelectorRow } from '@/app/(console)/settings/page';
-import type { ContaboStatus, OpsCard, OpsProxy } from '@/lib/types';
+import type { ContaboStatus, OpsCard, OpsProxy, OpsWaitlistEntry } from '@/lib/types';
 import { usePaged } from './Pager';
 import { btn, btnAccent, btnDanger, Dot, ErrorNote, field, label, PageHead, TONE, when } from './ui';
 
@@ -46,6 +46,7 @@ export function SettingsView({
   kameleoSetAt,
   multiloginSetAt,
   checkEvery,
+  waitlist,
 }: {
   selectors: SelectorRow[];
   operators: string[];
@@ -60,6 +61,7 @@ export function SettingsView({
   kameleoSetAt: string | null;
   multiloginSetAt?: string | null;
   checkEvery: number;
+  waitlist: OpsWaitlistEntry[];
 }) {
   const router = useRouter();
   const [error, setError] = useState(initialError);
@@ -149,6 +151,28 @@ export function SettingsView({
       <ErrorNote message={error} />
 
       <div className="space-y-2.5">
+        <Section title="waitlist" summary={`${waitlist.length} signup${waitlist.length === 1 ? '' : 's'}`} open={openSet.has('waitlist')} onToggle={toggle}>
+          <div className="px-5 py-4">
+            {waitlist.length === 0 ? (
+              <p className="text-[13px] text-muted">No early-access signups yet. They&rsquo;ll appear here when people join from the homepage.</p>
+            ) : (
+              <div className="space-y-2">
+                {waitlist.map((w) => (
+                  <div key={w.id} className="rounded-lg border border-line bg-raised/40 px-3.5 py-3">
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <span className="font-mono text-[14px] text-fg">{w.email}</span>
+                      {w.marketplace ? <span className="rounded bg-raised px-1.5 py-px font-mono text-[11px] text-muted">{w.marketplace}</span> : null}
+                      {w.monthly_orders ? <span className="font-mono text-[12px] text-muted">{w.monthly_orders} orders/mo</span> : null}
+                      <span className="ml-auto font-mono text-[11px] text-muted">{when(w.created_at)}</span>
+                    </div>
+                    {w.comment ? <p className="mt-1.5 text-[13px] text-muted">&ldquo;{w.comment}&rdquo;</p> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Section>
+
         <Section title="appearance" summary={summary['appearance']} open={openSet.has('appearance')} onToggle={toggle}>
           <div className="px-5 py-4">
             <ThemeToggle />

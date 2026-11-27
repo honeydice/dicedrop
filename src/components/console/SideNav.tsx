@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const ITEMS = [
-  { href: '/', label: 'Overview' },
+  { href: '/dashboard', label: 'Overview' },
   { href: '/orders', label: 'Orders' },
   { href: '/clients', label: 'Clients' },
   { href: '/accounts', label: 'Accounts' },
@@ -17,7 +17,7 @@ export function SideNav() {
   return (
     <nav aria-label="Console" className="-mx-3 flex flex-row gap-1 overflow-x-auto px-3 [scrollbar-width:none] md:mx-0 md:flex-col md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
       {ITEMS.map((item) => {
-        const active = item.href === '/' ? path === '/' : path.startsWith(item.href);
+        const active = path === item.href || path.startsWith(item.href + '/');
         return (
           <Link
             key={item.href}

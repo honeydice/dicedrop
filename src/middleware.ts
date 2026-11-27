@@ -24,7 +24,8 @@ export async function middleware(request: NextRequest) {
   const { data } = await supabase.auth.getUser();
   const path = request.nextUrl.pathname;
 
-  if (!data.user && path !== '/login') {
+  // '/' is the public marketing homepage; everything else needs a signed-in operator.
+  if (!data.user && path !== '/login' && path !== '/') {
     const to = request.nextUrl.clone();
     to.pathname = '/login';
     to.search = '';
@@ -32,7 +33,7 @@ export async function middleware(request: NextRequest) {
   }
   if (data.user && path === '/login') {
     const to = request.nextUrl.clone();
-    to.pathname = '/';
+    to.pathname = '/dashboard';
     to.search = '';
     return NextResponse.redirect(to);
   }
