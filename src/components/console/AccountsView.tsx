@@ -568,11 +568,13 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
         </div>
       ) : null}
 
-      <Card title={`GET /accounts${folder ? `/${folder}` : ''}${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{folder ? rows.length : data.accounts.length}</Badge>}>
+      <Card title={`GET /accounts${folder ? `/${folder}` : ''}${filter === 'all' ? '' : `?filter=${filter}`}`} right={<Badge>{folder ? rows.length : data.accounts.filter((a) => (a.stage ?? 'live') === view).length}</Badge>}>
         {suppliers.map((s) => {
-          const inFolder = data.accounts.filter((a) => (a.supplier || 'amazon') === s);
+          // Count only accounts in THIS tab's category (live / warmup / archived), not every stage.
+          const inFolder = data.accounts.filter((a) => (a.supplier || 'amazon') === s && (a.stage ?? 'live') === view);
           const online = inFolder.filter(isReady).length;
           const isFolderOpen = folder === s;
+          if (inFolder.length === 0) return null;  // hide folders with nothing in this tab
           return (
             <div key={s} className="border-b border-divider last:border-b-0">
               <button
