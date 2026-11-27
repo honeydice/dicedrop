@@ -323,6 +323,7 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                   <select value={createSupplier} onChange={(e) => setCreateSupplier(e.target.value)} className={`${field} w-36`}>
                     <option value="amazon">Amazon</option>
                     <option value="walmart">Walmart</option>
+                    <option value="homedepot">Home Depot</option>
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">

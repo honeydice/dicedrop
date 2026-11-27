@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.39.3"
+VERSION = "0.40.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -4451,6 +4451,208 @@ def walmart_warm_up_browse(page, minutes, label=""):
     return ", ".join(bits)
 
 
+HOMEDEPOT_HOME = "https://www.homedepot.com/"
+HOMEDEPOT_SEARCH = "https://www.homedepot.com/s/"
+HOMEDEPOT_CART = "https://www.homedepot.com/mycart/home"
+# Tool-focused search terms so the profile warms by looking at drills, screwdrivers and the like.
+HOMEDEPOT_SEARCHES = ["cordless drill", "screwdriver set", "impact driver", "socket set", "tape measure",
+                      "circular saw", "drill bit set", "claw hammer", "wrench set", "work gloves",
+                      "utility knife", "stud finder", "torpedo level", "needle nose pliers", "orbital sander",
+                      "shop vacuum", "tool box", "led work light", "extension cord", "step ladder",
+                      "safety glasses", "ryobi drill", "dewalt impact driver", "milwaukee m18", "ridgid shop vac"]
+HOMEDEPOT_SECTIONS = [
+    ("Power Tools", "https://www.homedepot.com/b/Tools-Power-Tools/N-5yc1vZc2b0"),
+    ("Hand Tools", "https://www.homedepot.com/b/Tools-Hand-Tools/N-5yc1vZc28k"),
+    ("Tools", "https://www.homedepot.com/b/Tools/N-5yc1vZc1xy"),
+    ("Tool Deals", "https://www.homedepot.com/b/Tools/Special-Buys/N-5yc1vZc1xyZ1z175ff"),
+]
+
+
+def homedepot_blocked(page):
+    """True when Home Depot's Akamai bot wall ('Access Denied' / 'Pardon Our Interruption') is up, not the store."""
+    try:
+        u = (page.url or "").lower()
+        if "/blocked" in u or "access-denied" in u:
+            return True
+        body = (page.inner_text("body", timeout=3000) or "").lower()
+        for sign in ("access denied", "pardon our interruption", "reference #", "unusual activity",
+                     "verify you are a human", "are you a human", "don't have permission to access"):
+            if sign in body:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def homedepot_warm_up_browse(page, minutes, label=""):
+    """Browses Home Depot like a shopper (guest), focused on tools: arrives via a search engine or direct, searches
+    for drills/screwdrivers/etc., opens products, reads, sometimes carts then empties. Never buys. Stops on the bot wall."""
+    ends = time.time() + minutes * 60
+    searched, opened, carted, sections = 0, 0, 0, 0
+
+    def act(text):
+        if label:
+            report(label, activity=text)
+
+    def check(where):
+        if homedepot_blocked(page):
+            raise RobotCheck("Home Depot asked whether a person is there (" + where + "). The session stopped at once; nothing was answered.")
+
+    def scroll(times):
+        for _ in range(times):
+            try:
+                if random.random() < 0.6:
+                    human_move(page, random.uniform(250, 1000), random.uniform(200, 600))
+                page.mouse.wheel(0, random.randint(350, 900))
+            except Exception:
+                pass
+            pause(1.2, 3.5)
+
+    def browse_section():
+        nonlocal sections
+        name, url = random.choice(HOMEDEPOT_SECTIONS)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            check("in " + name)
+            sections += 1
+            scroll(random.randint(2, 5))
+            pause(1.5, 4.0)
+        except Stop:
+            raise
+        except Exception:
+            pass
+
+    def clear_cart():
+        nonlocal carted
+        if carted <= 0:
+            return
+        try:
+            page.goto(HOMEDEPOT_CART, wait_until="domcontentloaded", timeout=90000)
+            settle(page)
+            check("in the cart")
+            scroll(1)
+            for _ in range(carted + 3):
+                remove = first_visible(page, "button[aria-label*='Delete' i], button[aria-label*='Remove' i], button:has-text('Delete')")
+                if remove is None:
+                    break
+                try:
+                    remove.click(timeout=6000)
+                    settle(page)
+                    pause(0.8, 1.8)
+                except Exception:
+                    break
+        except Stop:
+            raise
+        except Exception:
+            pass
+
+    # Arrive: ~55% via a search engine, ~45% direct. About a third of the time lead with Google to gauge warmth.
+    warm_signal.clear()
+    lead_google = random.random() < 0.34
+    term = random.choice(HOMEDEPOT_SEARCHES)
+    if lead_google or random.random() < 0.55:
+        entry = arrive_via_search(page, term, HOMEDEPOT_HOME, HOMEDEPOT_SEARCH, "homedepot.com/", lead_google=lead_google) or "the web"
+    else:
+        name, url = random.choice([("direct (home)", HOMEDEPOT_HOME), ("direct (tools)", "https://www.homedepot.com/b/Tools/N-5yc1vZc1xy"),
+                                   ("direct (search)", HOMEDEPOT_SEARCH + term.replace(" ", "%20"))])
+        entry = name
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+        except Exception:
+            try:
+                page.goto(HOMEDEPOT_HOME, wait_until="domcontentloaded", timeout=90000)
+            except Exception:
+                pass
+    settle(page)
+    check("after arriving from " + entry)
+    scroll(random.randint(1, 3))
+
+    act("Opening Home Depot")
+    for term in random.sample(HOMEDEPOT_SEARCHES, 4):
+        if time.time() > ends:
+            break
+        act('Searching "' + term + '" on Home Depot')
+        box = first_visible(page, "input[type='search'], input[name='q'], #headerSearch, input[aria-label*='Search' i], input[placeholder*='What can we help' i]")
+        if box is None:
+            page.goto(HOMEDEPOT_SEARCH + term.replace(" ", "%20"), wait_until="domcontentloaded", timeout=90000)
+        else:
+            try:
+                box.click(timeout=6000)
+                box.fill("")
+                box.press_sequentially(term, delay=random.randint(70, 140))
+                pause(0.4, 1.0)
+                box.press("Enter")
+            except Stop:
+                raise
+            except Exception:
+                page.goto(HOMEDEPOT_SEARCH + term.replace(" ", "%20"), wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        check("after a search")
+        searched += 1
+        scroll(random.randint(2, 4))
+        for _ in range(random.randint(1, 2)):
+            if time.time() > ends:
+                break
+            try:
+                links = page.locator("a[href*='/p/']")
+                count = min(links.count(), 12)
+                if count == 0:
+                    break
+                link = links.nth(random.randint(0, count - 1))
+                address = link.get_attribute("href") or ""
+                try:
+                    link.evaluate("e => e.removeAttribute('target')")
+                    link.click(timeout=8000)
+                    page.wait_for_load_state("domcontentloaded", timeout=60000)
+                except Stop:
+                    raise
+                except Exception:
+                    page.goto(address if address.startswith("http") else "https://www.homedepot.com" + address, wait_until="domcontentloaded", timeout=90000)
+                settle(page)
+                check("on a product page")
+                opened += 1
+                act("Reading a tool on Home Depot")
+                scroll(random.randint(3, 7))
+                pause(2.0, 6.0)
+                if random.random() < 0.22:
+                    try:
+                        button = first_visible(page, "button[aria-label*='Add to Cart' i], button:has-text('Add to Cart')")
+                        if button is not None:
+                            button.click(timeout=8000)
+                            settle(page)
+                            check("after adding to the cart")
+                            carted += 1
+                            pause(1.0, 2.5)
+                    except Stop:
+                        raise
+                    except Exception:
+                        pass
+                page.go_back(wait_until="domcontentloaded", timeout=60000)
+                settle(page)
+            except Stop:
+                raise
+            except Exception:
+                break
+        if time.time() < ends and random.random() < 0.5:
+            browse_section()
+    check("at the end")
+    clear_cart()
+    try:
+        page.goto(HOMEDEPOT_HOME, wait_until="domcontentloaded", timeout=90000)
+        settle(page)
+        scroll(1)
+    except Exception:
+        pass
+    bits = ["browsed " + str(searched) + " Home Depot search" + ("" if searched == 1 else "es"),
+            str(opened) + " tool" + ("" if opened == 1 else "s")]
+    if sections:
+        bits.append(str(sections) + " section" + ("" if sections == 1 else "s"))
+    if carted:
+        bits.append("added " + str(carted) + " to cart then emptied it")
+    return ", ".join(bits)
+
+
 def warm_up_job(label):
     problem = ""
     is_robot = False
@@ -4464,6 +4666,9 @@ def warm_up_job(label):
             if site == "walmart":
                 stage[0] = "warming up Walmart as a guest"
                 return walmart_warm_up_browse(page, random.uniform(3.0, 5.5), label=label)
+            if site == "homedepot":
+                stage[0] = "warming up Home Depot as a guest"
+                return homedepot_warm_up_browse(page, random.uniform(3.0, 5.5), label=label)
             # No Amazon account yet (no saved password): warm the fresh profile as a guest to build cookies and
             # history on the profile + IP before the account is created. No sign-in attempted.
             if not secrets.get("password"):
