@@ -27,10 +27,10 @@ export function Landing({ isOperator }: { isOperator: boolean }) {
             </span>
           </div>
           <h1>
-            The first managed orders system built <span className="cream">for dropshippers</span>, <span className="by">by dropshippers</span>.
+            Fulfill your dropship orders through <span className="by">DiceDrop</span>.
           </h1>
           <p className="dd-sub">
-            Hands-off buying and fulfillment for your store. We place every order, track each package to the door, and prove delivery &mdash; you just keep selling.
+            Place every order through our own Amazon accounts, and never worry about making accounts or hitting credit limits again.
           </p>
           <div className="dd-cta-row">
             <WaitlistModal />
