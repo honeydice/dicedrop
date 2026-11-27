@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.39.1"
+VERSION = "0.39.2"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2996,6 +2996,68 @@ def picture(page, card_only=True):
 ORDER_DETAILS = "https://www.amazon.com/gp/your-account/order-details?orderID="
 
 
+def capture_delivery_photo(page):
+    """When Amazon shows a 'Package was left...' delivery photo on the track page, open it and screenshot just
+    the photo — the strongest proof of delivery. Returns a base64 JPEG, or '' if there's no photo or it can't
+    be opened. Best-effort: never raises, so the normal card screenshot still stands if this finds nothing."""
+    try:
+        opener = None
+        for sel in (
+            "[data-testid='deliveryPhoto'] img", "[data-testid*='delivery-photo' i] img",
+            "[data-testid*='delivery_photo' i] img", "img[alt*='delivery photo' i]",
+            "[aria-label*='delivery photo' i]", "a:has-text('delivery photo')",
+            "button:has-text('delivery photo')",
+            "img[src*='photo-on-delivery' i]", "img[src*='photoondelivery' i]", "img[src*='PhotoOnDelivery' i]",
+        ):
+            el = first_visible(page, sel)
+            if el is not None:
+                opener = el
+                break
+        if opener is None:
+            return ""
+        try:
+            opener.scroll_into_view_if_needed(timeout=3000)
+        except Exception:
+            pass
+        try:
+            opener.click(timeout=5000)
+        except Exception:
+            try:
+                opener.click(timeout=4000, force=True)
+            except Exception:
+                return ""
+        pause(0.8, 1.6)
+        # Grab the largest visible image inside the opened popup.
+        dialog = first_visible(page, "[role='dialog'], .a-popover-modal, [aria-modal='true']")
+        target, best_area = None, 0
+        if dialog is not None:
+            imgs = dialog.locator("img")
+            for i in range(min(imgs.count(), 8)):
+                im = imgs.nth(i)
+                try:
+                    if not im.is_visible():
+                        continue
+                    box = im.bounding_box()
+                    area = (box["width"] * box["height"]) if box else 0
+                    if area > best_area:
+                        target, best_area = im, area
+                except Exception:
+                    continue
+        shot = ""
+        if target is not None and best_area > 10000:  # ignore tiny icons; a real photo is large
+            try:
+                shot = base64.b64encode(target.screenshot(type="jpeg", quality=75)).decode()
+            except Exception:
+                shot = ""
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return shot
+    except Exception:
+        return ""
+
+
 def read_tracking(page, result, card_words=""):
     """Reads the opened Track package page into `result`: state, delivery window, tracking number, carrier, picture."""
     import re
@@ -3030,6 +3092,13 @@ def read_tracking(page, result, card_words=""):
         if not any(p in low for p in ["not yet shipped", "not yet dispatched", "preparing for shipment", "preparing to ship", "label created", "not yet been shipped"]):
             result["state"] = "shipped"
     result["screenshot"] = picture(page, card_only=True)
+    # If the parcel is delivered and Amazon left a delivery photo, use that photo as the proof instead of the
+    # page card — it's the real "left at the door" picture. Falls back to the card shot if there's no photo.
+    if result.get("state") == "delivered":
+        photo = capture_delivery_photo(page)
+        if photo:
+            result["screenshot"] = photo
+            result["delivery_photo"] = True
     return result
 
 
