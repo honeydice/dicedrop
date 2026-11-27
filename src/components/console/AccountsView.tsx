@@ -142,6 +142,8 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
   const [open, setOpen] = useState('');
   // Accounts are grouped into one folder per supplier. One folder is open at a time.
   const [folder, setFolder] = useState('');
+  // The live-activity panel (warm-up page) sits below the folders and starts minimized.
+  const [liveOpen, setLiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState('');
@@ -396,97 +398,40 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
         ))}
       </div>
 
-      {view === 'warmup' ? (() => {
-        const warm = data.accounts.filter((a) => (a.stage ?? 'live') === 'warmup');
-        const active = warm
-          .filter((a) => a.activity && a.activity_at && now && now - new Date(a.activity_at as string).getTime() < 180000)
-          .sort((a, b) => new Date(b.activity_at as string).getTime() - new Date(a.activity_at as string).getTime());
-        const activeIds = new Set(active.map((a) => a.id));
-        const nextUp = warm
-          .filter((a) => a.warmup_next_at && !activeIds.has(a.id) && a.status !== 'paused')
-          .sort((a, b) => new Date(a.warmup_next_at as string).getTime() - new Date(b.warmup_next_at as string).getTime())
-          .slice(0, 8);
-        const when = (iso: string) => {
-          const t = new Date(iso).getTime();
-          if (!now || t <= now) return 'due now';
-          return `next ${new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-        };
-        return (
-          <>
-          {dataUsage ? (
-            <div className="mb-5 rounded-xl border border-line bg-panel p-4">
-              <div className="mb-3 font-mono text-xs text-muted">proxy data used</div>
-              <div className="grid grid-cols-3 gap-3 font-mono">
-                <div>
-                  <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.today_bytes)}</div>
-                  <div className="text-xs text-muted">today</div>
-                </div>
-                <div>
-                  <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.month_bytes)}</div>
-                  <div className="text-xs text-muted">this month</div>
-                </div>
-                <div>
-                  <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.total_bytes)}</div>
-                  <div className="text-xs text-muted">all time</div>
-                </div>
-              </div>
-              {dataUsage.daily.length > 0 ? (
-                <div className="mt-3 flex items-end gap-1 border-t border-line pt-3" style={{ height: 44 }}>
-                  {(() => {
-                    const max = Math.max(...dataUsage.daily.map((d) => d.bytes), 1);
-                    return dataUsage.daily.map((d) => (
-                      <div
-                        key={d.day}
-                        title={`${d.day}: ${fmtBytes(d.bytes)}`}
-                        className="flex-1 rounded-sm"
-                        style={{ height: `${Math.max(3, (d.bytes / max) * 36)}px`, background: 'rgb(var(--accent))', opacity: 0.55 }}
-                      />
-                    ));
-                  })()}
-                </div>
-              ) : null}
+      {view === 'warmup' && dataUsage ? (
+        <div className="mb-5 rounded-xl border border-line bg-panel p-4">
+          <div className="mb-3 font-mono text-xs text-muted">proxy data used</div>
+          <div className="grid grid-cols-3 gap-3 font-mono">
+            <div>
+              <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.today_bytes)}</div>
+              <div className="text-xs text-muted">today</div>
+            </div>
+            <div>
+              <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.month_bytes)}</div>
+              <div className="text-xs text-muted">this month</div>
+            </div>
+            <div>
+              <div className="text-lg font-semibold text-fg">{fmtBytes(dataUsage.total_bytes)}</div>
+              <div className="text-xs text-muted">all time</div>
+            </div>
+          </div>
+          {dataUsage.daily.length > 0 ? (
+            <div className="mt-3 flex items-end gap-1 border-t border-line pt-3" style={{ height: 44 }}>
+              {(() => {
+                const max = Math.max(...dataUsage.daily.map((d) => d.bytes), 1);
+                return dataUsage.daily.map((d) => (
+                  <div
+                    key={d.day}
+                    title={`${d.day}: ${fmtBytes(d.bytes)}`}
+                    className="flex-1 rounded-sm"
+                    style={{ height: `${Math.max(3, (d.bytes / max) * 36)}px`, background: 'rgb(var(--accent))', opacity: 0.55 }}
+                  />
+                ));
+              })()}
             </div>
           ) : null}
-          <div className="mb-5 rounded-xl border border-line bg-panel p-4">
-            <div className="mb-3 flex items-center gap-2 font-mono text-xs text-muted">
-              <span className="relative flex h-2 w-2">
-                {active.length > 0 ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-75" /> : null}
-                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: active.length > 0 ? 'rgb(var(--good))' : 'rgb(var(--muted))' }} />
-              </span>
-              live activity · {active.length} browsing now
-            </div>
-            {active.length === 0 ? (
-              <p className="font-mono text-[13px] text-muted">Nothing browsing this exact moment — sessions run a few at a time and each lasts a few minutes. The schedule below shows what&apos;s next.</p>
-            ) : (
-              <ul className="space-y-1.5 font-mono text-[13px]">
-                {active.map((a) => (
-                  <li key={a.id} className="flex items-baseline gap-2">
-                    <span className="shrink-0 font-semibold text-fg">{a.label}</span>
-                    <span className="min-w-0 flex-1 truncate text-soft">{a.activity}</span>
-                    <span className="shrink-0 text-xs text-muted">{a.box_name ?? ''}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {nextUp.length > 0 ? (
-              <div className="mt-3 border-t border-line pt-3">
-                <div className="mb-2 font-mono text-xs text-muted">next up</div>
-                <ul className="grid grid-cols-1 gap-x-6 gap-y-1 font-mono text-[13px] sm:grid-cols-2">
-                  {nextUp.map((a) => (
-                    <li key={a.id} className="flex items-baseline gap-2">
-                      <span className="shrink-0 text-fg">{a.label}</span>
-                      <span className="ml-auto shrink-0 text-xs" style={now && new Date(a.warmup_next_at as string).getTime() <= now ? { color: 'rgb(var(--good))' } : { color: 'rgb(var(--muted))' }}>
-                        {when(a.warmup_next_at as string)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-          </>
-        );
-      })() : null}
+        </div>
+      ) : null}
       {view === 'archived' ? (
         <p className="mb-4 text-[13px] text-muted">
           Trashed accounts do nothing — no orders, no warm-up, no checks. They stay here in case you need their details or history. Restore one to a lane, or remove it for good.
@@ -995,6 +940,71 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
           );
         })}
       </Card>
+      {view === 'warmup' ? (() => {
+        const warm = data.accounts.filter((a) => (a.stage ?? 'live') === 'warmup');
+        const active = warm
+          .filter((a) => a.activity && a.activity_at && now && now - new Date(a.activity_at as string).getTime() < 180000)
+          .sort((a, b) => new Date(b.activity_at as string).getTime() - new Date(a.activity_at as string).getTime());
+        const activeIds = new Set(active.map((a) => a.id));
+        const nextUp = warm
+          .filter((a) => a.warmup_next_at && !activeIds.has(a.id) && a.status !== 'paused')
+          .sort((a, b) => new Date(a.warmup_next_at as string).getTime() - new Date(b.warmup_next_at as string).getTime())
+          .slice(0, 8);
+        const when = (iso: string) => {
+          const t = new Date(iso).getTime();
+          if (!now || t <= now) return 'due now';
+          return `next ${new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+        };
+        return (
+          <div className="mt-5 rounded-xl border border-line bg-panel">
+            <button
+              type="button"
+              aria-expanded={liveOpen}
+              onClick={() => setLiveOpen((v) => !v)}
+              className="flex min-h-[44px] w-full items-center gap-2 bg-transparent p-4 text-left hover:bg-raised/60"
+            >
+              <span aria-hidden="true" className="w-3 font-mono text-[13px] text-muted">{liveOpen ? '▾' : '▸'}</span>
+              <span className="relative flex h-2 w-2">
+                {active.length > 0 ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-75" /> : null}
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ background: active.length > 0 ? 'rgb(var(--good))' : 'rgb(var(--muted))' }} />
+              </span>
+              <span className="font-mono text-xs text-muted">live activity · {active.length} browsing now</span>
+            </button>
+            {liveOpen ? (
+              <div className="px-4 pb-4">
+                {active.length === 0 ? (
+                  <p className="font-mono text-[13px] text-muted">Nothing browsing this exact moment — sessions run a few at a time and each lasts a few minutes. The schedule below shows what&apos;s next.</p>
+                ) : (
+                  <ul className="space-y-1.5 font-mono text-[13px]">
+                    {active.map((a) => (
+                      <li key={a.id} className="flex items-baseline gap-2">
+                        <span className="shrink-0 font-semibold text-fg">{a.label}</span>
+                        <span className="min-w-0 flex-1 truncate text-soft">{a.activity}</span>
+                        <span className="shrink-0 text-xs text-muted">{a.box_name ?? ''}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {nextUp.length > 0 ? (
+                  <div className="mt-3 border-t border-line pt-3">
+                    <div className="mb-2 font-mono text-xs text-muted">next up</div>
+                    <ul className="grid grid-cols-1 gap-x-6 gap-y-1 font-mono text-[13px] sm:grid-cols-2">
+                      {nextUp.map((a) => (
+                        <li key={a.id} className="flex items-baseline gap-2">
+                          <span className="shrink-0 text-fg">{a.label}</span>
+                          <span className="ml-auto shrink-0 text-xs" style={now && new Date(a.warmup_next_at as string).getTime() <= now ? { color: 'rgb(var(--good))' } : { color: 'rgb(var(--muted))' }}>
+                            {when(a.warmup_next_at as string)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })() : null}
       {data.ip_gate ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted">
           <span>IP gate is per-account (toggle it on an account). Global:</span>
