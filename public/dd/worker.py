@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.39.2"
+VERSION = "0.39.3"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -4285,8 +4285,9 @@ def walmart_warm_up_browse(page, minutes, label=""):
     def check(where):
         if walmart_blocked(page):
             # Known Walmart fix: clear its cookies + cached site data and reload, and the Press & Hold
-            # wall usually drops. Try that (up to twice) before giving up on the session.
-            if cleared["tries"] < 2:
+            # wall sometimes drops. Try that ONCE per session (to save proxy data); if the wall is still up
+            # after the single clear, end the session and come back on the next scheduled run.
+            if cleared["tries"] < 1:
                 cleared["tries"] += 1
                 act("Clearing Walmart cache")
                 clear_walmart_site_data(page)
