@@ -71,9 +71,9 @@ export function Landing({ isOperator }: { isOperator: boolean }) {
         <div className="dd-wrap dd-foot">
           <div className="dd-foot-brand">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="" width={28} height={28} />Dice<span style={{ color: 'var(--l-accent)' }}>Drop</span>
+            <img src="/logo.png" alt="DiceDrop" width={28} height={28} />
           </div>
-          <small>Built for dropshippers, by dropshippers.</small>
+          <small>&copy; 2026 DiceDrop. All rights reserved.</small>
         </div>
       </footer>
     </div>
