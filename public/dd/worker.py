@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.42.0"
+VERSION = "0.45.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1766,12 +1766,72 @@ def clear_cart(page, label, secrets):
         pause(1.5, 2.5)
 
 
+REGULAR_PRICE_JS = r"""
+() => {
+  const vis = (n) => n && n.offsetParent !== null;
+  // Find the most specific visible element whose text is the "Regular Price" option label.
+  let cands = Array.from(document.querySelectorAll('span,div,label,a,li')).filter(n => {
+    const t = (n.textContent || '').trim();
+    return /regular price/i.test(t) && t.length < 80 && vis(n);
+  });
+  if (!cands.length) return 'none';
+  cands.sort((a, b) => a.textContent.length - b.textContent.length);
+  const label = cands[0];
+  let el = label;
+  for (let i = 0; i < 8 && el; i++) {
+    const r = el.querySelector && el.querySelector('input[type=radio]');
+    if (r) { r.scrollIntoView({block:'center'}); r.click(); return 'radio'; }
+    if (el.matches && el.matches('[role=radio],[role=button],.a-accordion-row,.a-button-input,a')) {
+      el.scrollIntoView({block:'center'}); el.click(); return 'row';
+    }
+    el = el.parentElement;
+  }
+  label.scrollIntoView({block:'center'}); label.click();
+  return 'text';
+}
+"""
+
+
+def select_regular_price(page):
+    """Some items show a Prime-exclusive deal price selected by default, alongside a 'Regular Price'
+    option. A non-Prime account can't use the Prime price — Amazon hides Add to Cart and shows
+    'Join Prime' instead — so pick Regular Price to buy at the normal price through the usual flow.
+    Returns how it was picked ('radio'/'row'/'text'), or '' when there was nothing to pick."""
+    outcome = ""
+    for _ in range(3):
+        try:
+            outcome = page.evaluate(REGULAR_PRICE_JS)
+        except Exception:
+            outcome = "none"
+        if outcome in ("radio", "row", "text"):
+            settle(page)
+            if visible(page, "#add-to-cart-button"):
+                return outcome
+        if outcome == "none":
+            return ""
+        pause()
+    return outcome
+
+
 def add_to_cart(page, order):
     page.goto("https://www.amazon.com/dp/" + order["asin"] + "?th=1&psc=1", wait_until="domcontentloaded", timeout=90000)
     settle(page)
     if visible(page, CAPTCHA):
         raise Stop("Amazon is showing a picture puzzle on the product page.")
     look_around(page)  # read the product page before adding it
+    # A Prime-exclusive deal price can be selected by default, which hides Add to Cart behind a
+    # "Join Prime" wall. On a non-Prime account (or whenever Add to Cart is missing but a regular
+    # price is offered), switch to the Regular Price so the order goes through at the normal price.
+    if order.get("non_prime") or not visible(page, "#add-to-cart-button"):
+        picked = select_regular_price(page)
+        if picked:
+            log("non-Prime: picked Regular Price (" + str(picked) + ")")
+            try:
+                p = current_job.get("progress")
+                if p:
+                    p(note="picked Regular Price (non-Prime)")
+            except Exception:
+                pass
     if not visible(page, "#add-to-cart-button"):
         availability = ""
         try:
