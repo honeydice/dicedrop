@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.41.4"
+VERSION = "0.42.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -5371,7 +5371,7 @@ def cart_only_job(job):
                 if current_job.get("verify_note"):
                     # The order was created, so Amazon's payment check at checkout let it through.
                     # The remark stays on the order (and keeps it on a 3-minute watch for 50 minutes).
-                    totals["verify"] = "Amazon showed its Confirm your identity page at checkout"
+                    totals["verify"] = "Checkout passed through Amazon's payment-confirmation step (/cpe/)"
                 if current_job.get("verify_seen"):
                     totals["verify_page"] = current_job["verify_seen"]
                 # Record the order right away. Nothing after this line can undo it or cause it to be placed again.
@@ -5403,7 +5403,7 @@ def cart_only_job(job):
                 # holding, hiding, or cancelling it. check_order has already made that call above (seen["state"]).
                 if current_job.get("verify_note"):
                     if seen.get("state") == "ordered":
-                        trail("Checkout passed Amazon's \"Confirm your identity\" page (/cpe/); the order then showed on "
+                        trail("Checkout passed through Amazon's payment-confirmation step (/cpe/); the order then showed on "
                               "the order page, so it's counted as ordered and watched — it'll only surface if a later "
                               "check finds it flagged.")
                     else:
@@ -5411,7 +5411,7 @@ def cart_only_job(job):
                         # Keep check_order's own verdict and show the identity page captured the moment it appeared.
                         if seen.get("note") == "Verify Payment" and current_job.get("verify_shot") and not seen.get("screenshot"):
                             seen["screenshot"] = current_job["verify_shot"]
-                        trail("Checkout went through Amazon's identity page (/cpe/) and the order page came back as "
+                        trail("Checkout went through Amazon's payment-confirmation step (/cpe/) and the order page came back as "
                               + str(seen.get("note") or seen.get("state") or "unconfirmed") + " — see the order's status.")
                 current_job["shot"] = seen.get("screenshot", "")
                 log("after ordering: " + str(seen.get("state")) + ", estimate '" + str(seen.get("delivery_estimate")) + "', picture " + ("taken" if seen.get("screenshot") else "missing"))
