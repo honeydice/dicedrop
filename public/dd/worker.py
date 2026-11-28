@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.47.0"
+VERSION = "0.48.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -2801,6 +2801,32 @@ def order_numbers(view):
         return set()
 
 
+def confirm_payment_method(page):
+    """Amazon can insert a "Use this payment method" page (/checkout/p/.../pay) before the final review,
+    with the account's card already selected. Confirm the selected card to advance to Place your order.
+    This only clicks the continue button — it never changes which card is selected. Returns True if it
+    advanced, False when this page is not showing."""
+    try:
+        url = (page.url or "").lower()
+    except Exception:
+        url = ""
+    on_pay = url.rstrip("/").endswith("/pay") or "/pay?" in url
+    if not on_pay:
+        try:
+            on_pay = bool(page.query_selector("#checkout-primary-continue-button")) and page.get_by_text("Use this payment method", exact=False).count() > 0
+        except Exception:
+            on_pay = False
+    if not on_pay:
+        return False
+    if safe_click(page, ["#checkout-primary-continue-button", "#checkout-primary-continue-button-announce", "#orderSummaryPrimaryActionBtn"]):
+        settle(page)
+        return True
+    if click_text(page, ["Use this payment method"]):
+        settle(page)
+        return True
+    return False
+
+
 def place_order(page, label=""):
     """The ONLY place in this worker that buys. It runs only for a "place_order" run.
     It clicks Place your order once (and confirms Amazon's duplicate page once if that appears).
@@ -2826,7 +2852,16 @@ def place_order(page, label=""):
         history = None
 
     look_around(page, 1, 3)  # look the order over before buying, like anyone would
+    # Amazon can show a "Use this payment method" confirmation page before the final review. The card
+    # is already selected, so confirm it to reach the Place your order button.
     button = first_visible(page, "#placeOrder, input[name='placeYourOrder1']")
+    for _ in range(3):
+        if button is not None:
+            break
+        if not confirm_payment_method(page):
+            break
+        look_around(page, 1, 2)
+        button = first_visible(page, "#placeOrder, input[name='placeYourOrder1']")
     if button is None:
         raise Stop("Could not find Amazon's Place your order button. Nothing was ordered." + describe(page))
     current_job["place_clicked"] = True
