@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.46.0"
+VERSION = "0.47.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1835,6 +1835,57 @@ def decline_prime(page):
         settle(page)
         return True
     return False
+
+
+SHIP_FREE_JS = r"""
+() => {
+  const money = (s) => { const m = (s || '').match(/\$\s?(\d+\.\d{2})/); return m ? parseFloat(m[1]) : null; };
+  const radios = Array.from(document.querySelectorAll('input[type=radio]')).filter(r => r.offsetParent !== null);
+  const opts = [];
+  for (const r of radios) {
+    let row = r;
+    for (let i = 0; i < 5 && row.parentElement; i++) row = row.parentElement;
+    const txt = ((row && row.textContent) || '').replace(/\s+/g, ' ').trim();
+    const hasDate = /\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*/i.test(txt);
+    const free = /\bFREE\b/i.test(txt) || /\$0\.00/.test(txt);
+    const cost = free ? 0 : money(txt);
+    if (!hasDate || cost === null) continue;   // not a dated delivery option with a readable cost
+    opts.push({ r, cost });
+  }
+  if (!opts.length) return 'none';
+  const current = opts.find(o => o.r.checked);
+  const curCost = current ? current.cost : Infinity;
+  opts.sort((a, b) => a.cost - b.cost);
+  const best = opts[0];
+  // Only ever switch a PAID selection down to a free one — never reshuffle between equal-cost options.
+  if (best.cost === 0 && curCost > 0) {
+    best.r.scrollIntoView({ block: 'center' });
+    best.r.click();
+    return 'picked-free';
+  }
+  return 'no-change';
+}
+"""
+
+
+def select_free_shipping(page):
+    """At checkout, switch a paid delivery option down to the free one. A $35+ order ships free on the
+    slower speed, but checkout can default to a paid faster speed (notably on non-Prime accounts), so
+    this avoids the shipping fee. Only ever downgrades a paid selection to free. Returns 'picked-free'
+    when it switched, else ''."""
+    for _ in range(2):
+        try:
+            outcome = page.evaluate(SHIP_FREE_JS)
+        except Exception:
+            outcome = "none"
+        if outcome == "picked-free":
+            settle(page)
+            return "picked-free"
+        if outcome == "none":
+            pause()  # the delivery options may not be rendered yet; give it a moment and retry once
+            continue
+        return ""
+    return ""
 
 
 def add_to_cart(page, order):
@@ -5441,6 +5492,12 @@ def cart_only_job(job):
             stage[0] = "adding the buyer's address at checkout"
             progress(note="adding the buyer's address")
             add_address_at_checkout(page, ship)
+            # A $35+ order ships free on the slower speed, but checkout can default to a paid faster
+            # speed (notably on non-Prime accounts). Switch to the free delivery option to avoid the fee.
+            if select_free_shipping(page) == "picked-free":
+                log("selected free shipping at checkout")
+                progress(note="selected free shipping")
+                settle(page)
             stage[0] = "adding the gift message"
             progress(note="adding the gift message")
             gift_note = add_gift(page, order.get("gift"))
