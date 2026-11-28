@@ -840,7 +840,7 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                         <button type="button" disabled={busy} className={btn}
                           style={a.non_prime ? { borderColor: TONE.warn, color: TONE.warn } : { borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
                           onClick={() => void patch(a.id, { non_prime: !a.non_prime })}>
-                          {a.non_prime ? 'Non-Prime · only $35+ orders' : 'Prime · all orders'}
+                          {a.non_prime ? 'Non-Prime · only $35+ orders' : 'Prime · only under $35'}
                         </button>
                       </div>
                       <div className="mt-3 flex items-center gap-3">
