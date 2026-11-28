@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.45.0"
+VERSION = "0.46.0"
 DD_URL = os.environ.get("DD_URL", "https://dicedrop.vercel.app").rstrip("/")
 TOKEN = os.environ.get("DD_BOX_TOKEN", "")
 KAMELEO = os.environ.get("KAMELEO_URL", "http://127.0.0.1:5050").rstrip("/")
@@ -1811,6 +1811,30 @@ def select_regular_price(page):
             return ""
         pause()
     return outcome
+
+
+def decline_prime(page):
+    """Dismiss Amazon's 'join Prime' upsell (the checkout interstitial at /checkout/p/.../pip, or a
+    product-page offer) by choosing No thanks, so a non-Prime order keeps going. Returns True when it
+    declined one, False when there was no Prime offer to dismiss."""
+    try:
+        here = bool(page.query_selector("#prime-signup-button-announce, #prime-declineCTA, [id*='prime-signup'], [id*='prime-interstitial'], [id*='primeAcquisition']"))
+    except Exception:
+        here = False
+    if not here:
+        try:
+            here = page.locator("text=/join Prime/i").count() > 0
+        except Exception:
+            here = False
+    if not here:
+        return False
+    if safe_click(page, ["#prime-declineCTA", "a#prime-declineCTA", "input[name='prime-interstitial-decline']", "#prime-no-thanks", "a#no-thanks"]):
+        settle(page)
+        return True
+    if click_text(page, ["No thanks", "No Thanks", "No, thanks", "Not now", "Continue without Prime"]):
+        settle(page)
+        return True
+    return False
 
 
 def add_to_cart(page, order):
@@ -5393,9 +5417,15 @@ def cart_only_job(job):
             settle(page)
             pass_sign_in_wall(page, label, secrets)
             settle(page)
-            # Amazon sometimes puts a page in between the cart and checkout. Step through up to four of them.
-            for _ in range(4):
-                if "/checkout/p/" in page.url or wait_for_checkout(page, 4):
+            # Amazon sometimes puts a page in between the cart and checkout. Step through up to five of them.
+            for _ in range(5):
+                # The Prime upsell lives at /checkout/p/.../pip, which otherwise looks like the checkout
+                # URL — decline it first so it isn't mistaken for the real checkout page below.
+                if decline_prime(page):
+                    progress(note="declined the Prime offer")
+                    settle(page)
+                    continue
+                if ("/checkout/p/" in page.url and "/pip" not in page.url) or wait_for_checkout(page, 4):
                     break
                 if click_text(page, ["Continue to checkout", "Continue to Checkout"]):
                     progress(note="continuing to checkout")
@@ -5427,6 +5457,9 @@ def cart_only_job(job):
                     raise Stop("Could not read the order total at checkout, so the order was not placed." + describe(page))
                 stage[0] = "placing the order"
                 progress(note="placing the order · total $" + format(totals["total"], ".2f"))
+                if decline_prime(page):
+                    progress(note="declined the Prime offer")
+                    settle(page)
                 order_id = place_order(page, label)
                 if current_job.get("verify_note"):
                     # The order was created, so Amazon's payment check at checkout let it through.
