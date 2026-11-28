@@ -226,6 +226,8 @@ export interface OpsAccount {
   orders_today: number;
   spent_today: number;
   orders_total: number;
+  /** All-time amount spent (sum of buy_cost) on this account. */
+  spent_total: number;
   open_issues: number;
   current_order: string | null;
   totp_enabled: boolean;

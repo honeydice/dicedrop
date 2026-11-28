@@ -144,6 +144,8 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
   const [folder, setFolder] = useState('');
   // The live-activity panel (warm-up page) sits below the folders and starts minimized.
   const [liveOpen, setLiveOpen] = useState(false);
+  // The account-performance panel (Active accounts page) sits below the folders and starts minimized.
+  const [statsOpen, setStatsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState('');
@@ -941,6 +943,82 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
           );
         })}
       </Card>
+      {view === 'live' ? (() => {
+        // Per-account performance for Active accounts: avg orders/day, lifetime orders, lifetime spend, and age.
+        const live = data.accounts.filter((a) => (a.stage ?? 'live') === 'live');
+        // warmup_started_at is the account's created_at (sent for every account), so it doubles as "date added".
+        const ageDays = (a: OpsAccount): number | null => {
+          if (!a.warmup_started_at) return null;
+          const ms = Date.now() - new Date(a.warmup_started_at).getTime();
+          if (!Number.isFinite(ms) || ms < 0) return null;
+          return Math.floor(ms / 86400000);
+        };
+        const avgPerDay = (a: OpsAccount): number => {
+          const d = ageDays(a);
+          return Number(a.orders_total) / Math.max(1, d ?? 1);
+        };
+        const stats = [...live].sort((a, b) => Number(b.spent_total) - Number(a.spent_total));
+        const totalOrders = live.reduce((s, a) => s + Number(a.orders_total), 0);
+        const totalSpent = live.reduce((s, a) => s + Number(a.spent_total), 0);
+        return (
+          <div className="mt-5 rounded-xl border border-line bg-panel">
+            <button
+              type="button"
+              aria-expanded={statsOpen}
+              onClick={() => setStatsOpen((v) => !v)}
+              className="flex min-h-[44px] w-full items-center gap-2 bg-transparent p-4 text-left hover:bg-raised/60"
+            >
+              <span aria-hidden="true" className="w-3 font-mono text-[13px] text-muted">{statsOpen ? '▾' : '▸'}</span>
+              <span className="font-mono text-xs text-muted">account performance · {live.length} active</span>
+            </button>
+            {statsOpen ? (
+              live.length === 0 ? (
+                <p className="px-4 pb-4 font-mono text-[13px] text-muted">No active accounts yet.</p>
+              ) : (
+                <div className="overflow-x-auto px-2 pb-3 sm:px-4">
+                  <table className="w-full min-w-[560px] font-mono text-[13px]">
+                    <thead>
+                      <tr className="border-b border-line text-muted">
+                        <th className="px-3 py-2 text-left font-medium">account</th>
+                        <th className="px-3 py-2 text-right font-medium">avg orders/day</th>
+                        <th className="px-3 py-2 text-right font-medium">total orders</th>
+                        <th className="px-3 py-2 text-right font-medium">total spent</th>
+                        <th className="px-3 py-2 text-right font-medium">added</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.map((a) => {
+                        const d = ageDays(a);
+                        return (
+                          <tr key={a.id} className="border-b border-divider last:border-b-0">
+                            <td className="px-3 py-2 font-medium text-fg">{a.label}</td>
+                            <td className="px-3 py-2 text-right text-fg">{avgPerDay(a).toFixed(1)}</td>
+                            <td className="px-3 py-2 text-right text-fg">{a.orders_total}</td>
+                            <td className="px-3 py-2 text-right text-fg">{money(Number(a.spent_total))}</td>
+                            <td className="px-3 py-2 text-right text-muted">
+                              {a.warmup_started_at ? new Date(a.warmup_started_at).toLocaleDateString() : '—'}
+                              {d !== null ? ` · ${d}d` : ''}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-line text-muted">
+                        <td className="px-3 py-2 text-left font-medium">{live.length} accounts</td>
+                        <td className="px-3 py-2" />
+                        <td className="px-3 py-2 text-right text-fg">{totalOrders}</td>
+                        <td className="px-3 py-2 text-right text-fg">{money(totalSpent)}</td>
+                        <td className="px-3 py-2" />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )
+            ) : null}
+          </div>
+        );
+      })() : null}
       {view === 'warmup' ? (() => {
         const warm = data.accounts.filter((a) => (a.stage ?? 'live') === 'warmup');
         const active = warm
