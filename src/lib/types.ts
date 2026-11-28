@@ -183,6 +183,8 @@ export interface OpsAccount {
   in_use_elsewhere?: boolean;
   /** False: the account is still checked for shipping, but no new order is sent to it. */
   ordering_enabled?: boolean;
+  /** Non-Prime account: only orders with a base cost of $35+ (the free-ship threshold) are sent to it. */
+  non_prime?: boolean;
   /** Which browser the account runs in: kameleo (default) or multilogin, with the name of its Multilogin profile. */
   engine?: string;
   mlx_profile?: string | null;

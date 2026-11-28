@@ -578,6 +578,15 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                         </span>
                       );
                     })()}
+                    {a.non_prime ? (
+                      <span
+                        className="shrink-0 rounded px-1.5 py-px font-mono text-[10px] font-semibold"
+                        style={{ background: 'rgba(250,204,21,0.14)', color: 'rgb(250,204,21)' }}
+                        title="Non-Prime account — only orders with a base cost of $35+ are sent to it"
+                      >
+                        Non-Prime
+                      </span>
+                    ) : null}
                     <span className="min-w-0 flex-1 truncate font-mono text-xs" style={{ color: st.color }} title={st.text}>
                       {st.text}
                     </span>
@@ -824,6 +833,14 @@ export function AccountsView({ initial, initialError, dataUsage }: { initial: Op
                           style={a.ip_gate_on ? { borderColor: TONE.good, color: TONE.good } : { borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
                           onClick={() => void run(() => setAccountIpGate(a.id, !a.ip_gate_on))}>
                           {a.ip_gate_on ? 'on · checked before open' : 'off'}
+                        </button>
+                      </div>
+                      <div className="mt-3 flex items-center gap-3">
+                        <span className="font-mono text-xs text-muted">account type</span>
+                        <button type="button" disabled={busy} className={btn}
+                          style={a.non_prime ? { borderColor: TONE.warn, color: TONE.warn } : { borderColor: 'rgb(var(--line))', color: 'rgb(var(--muted))' }}
+                          onClick={() => void patch(a.id, { non_prime: !a.non_prime })}>
+                          {a.non_prime ? 'Non-Prime · only $35+ orders' : 'Prime · all orders'}
                         </button>
                       </div>
                       <div className="mt-3 flex items-center gap-3">

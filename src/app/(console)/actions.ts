@@ -250,6 +250,7 @@ export interface AccountPatch {
   status?: 'warming' | 'active' | 'paused' | 'locked';
   box_id?: string | null;
   daily_order_cap?: number;
+  non_prime?: boolean;
 }
 
 export async function updateAccount(id: string, patch: AccountPatch): Promise<Result> {
@@ -264,6 +265,7 @@ export async function updateAccount(id: string, patch: AccountPatch): Promise<Re
       if (!Number.isFinite(cap) || cap < 1) return { ok: false, error: 'Daily order cap must be 1 or more.' };
       clean.daily_order_cap = cap;
     }
+    if (patch.non_prime !== undefined) clean.non_prime = patch.non_prime;
     if (Object.keys(clean).length === 0) return { ok: true, error: '' };
     const { error } = await ctx.db.from('buyer_accounts').update(clean).eq('id', id);
     return done(error);
